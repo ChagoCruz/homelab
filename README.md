@@ -160,9 +160,9 @@ Personal knowledge graph integration
 
 ## 🎯 Why This Project Exists
 This project serves three purposes:
-Personal Infrastructure – Owning and understanding my own data systems
-Architectural Practice – Designing production-grade backend systems
-Continuous Learning – Exploring AI integration, containerization, and distributed self-hosted systems
+- Personal Infrastructure – Owning and understanding my own data systems
+- Architectural Practice – Designing production-grade backend systems
+- Continuous Learning – Exploring AI integration, containerization, and distributed self-hosted systems
 
 It reflects a belief that software should empower individuals to build their own tools — not just consume them.
 
