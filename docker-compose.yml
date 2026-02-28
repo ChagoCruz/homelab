@@ -3,8 +3,6 @@ services:
     image: postgres:16
     container_name: homelab-postgres
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-homelab}
       POSTGRES_USER: ${POSTGRES_USER:-homelab}
@@ -25,7 +23,7 @@ services:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-homelab}:${POSTGRES_PASSWORD:-homelab}@db:5432/${POSTGRES_DB:-homelab}
       CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173
     ports:
-      - "127.0.0.1:8000:8000"
+      - "8000:8000"
 
 volumes:
   pgdata:
