@@ -45,6 +45,14 @@ CREATE TABLE IF NOT EXISTS weight
     CONSTRAINT weight_pkey PRIMARY KEY (id)
 )
 
+CREATE TABLE IF NOT EXISTS blood_pressure
+(
+    id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    entry_date date NOT NULL DEFAULT CURRENT_DATE,
+    systolic integer NOT NULL,
+    diastolic integer NOT NULL
+)
+
 CREATE TABLE journal (
     id SERIAL PRIMARY KEY,
     entry_date DATE NOT NULL DEFAULT CURRENT_DATE,

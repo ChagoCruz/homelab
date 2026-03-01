@@ -1,5 +1,36 @@
-from sqlalchemy import Column, Integer, String, Date
+from sqlalchemy import Column, Integer, String, Date, Float, Boolean
 from app.db.base import Base
+
+class Bill(Base):
+    __tablename__ = "bills"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String)
+    amount = Column(Float)
+    due_date = Column(Date)
+    paid = Column(Boolean)
+    paid_date = Column(Date, nullable=True)
+
+class CarMileage(Base):
+    __tablename__ = "car_mileage"
+    id = Column(Integer, primary_key=True, index=True)
+    log_date = Column(Date)
+    odometer = Column(Integer)
+
+class Expense(Base):
+    __tablename__ = "expenses"
+    id = Column(Integer, primary_key=True, index=True)
+    amount = Column(Float)
+    description = Column(String)
+    spent_date = Column(Date)
+    category = Column(String)
+
+class Income(Base):
+    __tablename__ = "income"
+    id = Column(Integer, primary_key=True, index=True)
+    source = Column(String)
+    amount = Column(Float)
+    received_date = Column(Date)
+    notes = Column(String)
 
 class Journal(Base):
     __tablename__ = "journal"
