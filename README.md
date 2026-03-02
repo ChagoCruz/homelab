@@ -6,7 +6,9 @@ Full Stack Engineer | Backend Systems
 A self-hosted, containerized backend for managing personal data, analytics, and AI-powered insights.
 Built as the foundation for a long-term “Life Terminal” system.
 
-**Status:** Active Development | Self-Hosted | Dockerized | Production-Deployed
+**Status:**  
+Active Development | Self-Hosted | Dockerized | Production-Deployed  
+FastAPI + Vue Web UI Live
 
 ## 🚀 Overview
 Homelab is a self-hosted infrastructure project designed to centralize and manage personal life data — including finances, journal entries, expenses, health metrics, job tracking, and more. The system is designed with clear separation between development and production environments, emphasizing reproducibility, data durability, and secure remote access.
@@ -23,19 +25,21 @@ The goal is to build a production-grade backend architecture that:
 This project is both a practical tool and an ongoing exploration of backend architecture, containerization, and distributed personal systems.
 
 ## 🏗 Architecture
-### Development Environment
+### Development Environment (macOS - Apple Silicon)
 - macOS (Apple Silicon)
 - Docker Desktop
 - PostgreSQL (containerized)
+- FastAPI backend container
+- Vue 3 (Vite) web frontend
+- Docker Compose with machine-specific overrides
 
-### Planned
-- FastAPI container
-
-### Production Environment
-- Ubuntu Server (self-hosted)
+### Production Environment (Ubuntu Server)
 - Docker Engine
 - Persistent database volumes stored on hardware
 - Accessed securely via Tailscale VPN
+- PostgreSQL 16 (bind-mounted to physical storage)
+- FastAPI container
+- Vue 3 web container (served via Vite)
 
 ### Planned Frontend Layer
 - Raspberry Pi with HyperPixel 720x720 touchscreen
@@ -45,13 +49,12 @@ This project is both a practical tool and an ongoing exploration of backend arch
 ## 🧰 Tech Stack
 ### Current
 - PostgreSQL 16
+- FastAPI (Python)
+- SQLAlchemy (ORM)
+- Vue 3 + Vite
 - Docker & Docker Compose
 - Environment variable configuration via .env
-
-### In Progress
-- FastAPI (Python)
-- SQLAlchemy (async)
-- RESTful API layer
+- Tailscale VPN
 
 ### Planned
 - AI integration for:
@@ -66,48 +69,73 @@ This project is both a practical tool and an ongoing exploration of backend arch
 ## 📦 Repository Structure
 ```
 homelab/
-├── README.md
-├── docker-compose.yml
-├── .env
+├── backend/
+│ ├── app/
+│ │ ├── db/
+│ │ ├── models/
+│ │ ├── schemas/
+│ │ └── routers/
+│ └── Dockerfile
+├── frontend/
+│ ├── web/ # Vue 3 browser UI (journal, bills, mileage, etc.)
+│ └── kiosk/ # Future Raspberry Pi touchscreen UI
 ├── db/
-│   └── init/
-│       └── (SQL initialization scripts)
+│ └── init/ # SQL initialization scripts
+├── docker-compose.yml
+├── docker-compose.override.yml
+├── .env
+└── README.md
 ```
 
-As the project evolves, the structure will expand to include:
+### Structure Overview
+- **backend/** – FastAPI application and database models  
+- **frontend/web/** – Vue 3 + Vite web UI  
+- **frontend/kiosk/** – Dedicated UI for Raspberry Pi touchscreen (planned)  
+- **db/init/** – SQL bootstrap scripts  
+- **docker-compose.yml** – Base multi-service configuration  
+- **docker-compose.override.yml** – Machine-specific overrides (dev vs server)
 
-api/
-frontend/
-infrastructure/
-
-## ⚙️ Getting Started (Development)
+## ⚙️ Getting Started (Full Stack)
 1. Clone the Repository
     ```bash
     git clone https://github.com/ChagoCruz/homelab.git
     cd homelab
     ```
 2. Create Environment File
-Create a .env file:
+Create a .env file in the project root:
     ```env
     POSTGRES_DB=homelab
     POSTGRES_USER=homelab
     POSTGRES_PASSWORD=homelab
     ```
 
-3. Start Containers
+3. Build and Start All Services
     ```bash
-    docker compose up -d
+    docker compose up -d --build
     ```
-4. Verify Running Containers
-    ```bash
-    docker ps
-    ```
+    - This will start:
+        - PostgreSQL database
+        - FastAPI backend
+        - Vue 3 web frontend
 
-The PostgreSQL container should now be running and accessible locally.
+4. Access the Application
+
+    - ***API Docs(Swagger):***
+        http://localhost:8000/docs
+    
+    - ***Web UI (Journal Page):***
+        http://localhost:5173/journal
+
+## 🖥 Web Interface (Journal Page)
+Black-and-white retro terminal-inspired UI built with Vue 3.
+<p align="center">
+  <img src="assets/screenshots/journal-page.png" width="800" />
+</p>
+
 
 ## 💾 Data Persistence Strategy
 ### Production (Ubuntu Server)
-- Uses Docker named volumes
+- Uses bind-mounted persistent storage on physical hardware
 - Data stored on physical hardware
 - Survives container restarts
 
@@ -122,10 +150,11 @@ Fast and disposable development workflows
 
 ## 🔐 Remote Access
 The production server is accessed securely using:
-Tailscale VPN
-SSH over private network
-Port-restricted database access
-No public database exposure.
+
+- Tailscale VPN
+- SSH over private network
+- Port-restricted database access
+- No public database exposure
 
 ## 🧠 Long-Term Vision
 Homelab is the backend foundation for a larger system:
@@ -145,17 +174,23 @@ Natural language queries over life data
 Intelligent daily summaries
 Personal knowledge graph integration
 
+## ✅ Current Capabilities
+- Create and store journal entries via web UI
+- Persistent PostgreSQL storage on production server
+- Secure remote access via Tailscale
+- Separate development and production configurations
+- Containerized full-stack deployment
+
 ## 📈 Roadmap
  - [x] Dockerized PostgreSQL
- - [x] Environment configuration
- - [x] Production server deployment
- - [ ] FastAPI backend container
- - [ ] Database schema versioning
+ - [x] FastAPI backend container
+ - [x] Vue 3 web frontend (Journal page)
+ - [x] Production server deployment (Ubuntu + Tailscale)
+ - [ ] Database schema versioning (Alembic)
  - [ ] Authentication layer
- - [ ] API documentation (OpenAPI)
  - [ ] AI integration layer
- - [ ] Raspberry Pi UI
- - [ ] Mobile-accessible frontend
+ - [ ] Raspberry Pi kiosk UI
+ - [ ] Mobile-optimized interface
  - [ ] Observability & metrics
 
 ## 🎯 Why This Project Exists
