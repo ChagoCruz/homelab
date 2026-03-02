@@ -129,7 +129,7 @@ Create a .env file in the project root:
 ## 🖥 Web Interface (Journal Page)
 Black-and-white retro terminal-inspired UI built with Vue 3.
 <p align="center">
-  <img src="assets/screenshots/journal-page.png" width="800" />
+  <img src="assets/screenshots/journal_page.png" width="800" />
 </p>
 
 
