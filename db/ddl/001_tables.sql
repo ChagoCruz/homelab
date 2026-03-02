@@ -64,7 +64,8 @@ CREATE TABLE diet (
     log_date DATE NOT NULL DEFAULT CURRENT_DATE,
     meal TEXT NOT NULL,       -- e.g., "Breakfast", "Lunch", "Dinner", "Snack"
     food TEXT NOT NULL,       -- description of what you ate
-    calories INTEGER NOT NULL -- estimated calories for that food
+    calories INTEGER NOT NULL, -- estimated calories for that food
+	confidence TEXT NULL
 );
 
 CREATE TABLE workout (
@@ -107,4 +108,12 @@ CREATE TABLE recruiters (
     -- optional notes
 	notes TEXT NULL, 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS convo (
+	id SERIAL PRIMARY KEY,
+	convo_date DATE NOT NULL,
+	location TEXT NOT NULL,
+	performance TEXT NOT NULL,
+	description TEXT NOT NULL
 );
