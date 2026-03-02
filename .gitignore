@@ -5,3 +5,19 @@ __pycache__/
 *.log
 .DS_Store
 .vscode/
+
+# ----------------------------
+# Frontend (web + kiosk)
+# ----------------------------
+
+# Node dependencies
+frontend/**/node_modules/
+
+# Build output
+frontend/**/dist/
+frontend/**/.vite/
+
+# Frontend env files
+frontend/**/.env
+frontend/**/.env.*
+!frontend/**/.env.example

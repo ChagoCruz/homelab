@@ -25,5 +25,17 @@ services:
     ports:
       - "8000:8000"
 
+  web:
+    build:
+      context: ./frontend/web
+    container_name: homelab-web
+    restart: unless-stopped
+    environment:
+      - VITE_API_URL=http://api:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
 volumes:
   pgdata:

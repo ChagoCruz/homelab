@@ -1,0 +1,30 @@
+@font-face {
+  font-family: "VT323";
+  src: url("../assets/fonts/VT323-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --bg: #000;
+  --fg: #fff;
+  --muted: rgba(255, 255, 255, 0.6);
+  --line: rgba(255, 255, 255, 0.18);
+  --line2: rgba(255, 255, 255, 0.08);
+  --radius: 10px;
+  --pad: clamp(14px, 2.5vw, 28px);
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: "VT323", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  letter-spacing: 0.02em;
+}
