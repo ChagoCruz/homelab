@@ -73,8 +73,8 @@
           <div class="panelMeta">MULTIPLE ENTRIES / DAY</div>
         </div>
 
-        <div class="table">
-          <div class="thead">
+        <div class="table dietTable">
+          <div class="thead dietHead">
             <div>MEAL</div>
             <div>FOOD</div>
             <div>CAL</div>
@@ -86,7 +86,7 @@
             NO MEALS LOGGED FOR THIS DATE.
           </div>
 
-          <div v-for="(r, idx) in dietRows" :key="r._key" class="trow">
+          <div v-for="(r, idx) in dietRows" :key="r._key" class="trow dietRow">
             <select class="input" v-model="r.meal">
               <option value="">—</option>
               <option>breakfast</option>
@@ -214,7 +214,7 @@
                 <span>IN {{ totalIn }} | OUT {{ totalOut }} | NET {{ totalNet }}</span>
               </div>
 
-              <div class="dashTable">
+              <div class="dashTable caloriesTable">
                 <div class="dashHead calHead">
                   <div>DATE</div>
                   <div>IN</div>
@@ -696,5 +696,48 @@ onMounted(() => {
 @media (max-width: 980px) {
   .panel { grid-column: span 12; }
   .dashPanel { grid-column: span 12; }
+}
+
+@media (max-width: 760px) {
+  .dietHead {
+    display: none;
+  }
+
+  .dietRow {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "meal meal"
+      "food food"
+      "cal conf"
+      "del del";
+    gap: 10px;
+    border: 1px solid var(--line2);
+    border-radius: 10px;
+    padding: 10px;
+  }
+
+  .dietRow > :nth-child(1) { grid-area: meal; }
+  .dietRow > :nth-child(2) { grid-area: food; }
+  .dietRow > :nth-child(3) { grid-area: cal; }
+  .dietRow > :nth-child(4) { grid-area: conf; }
+  .dietRow > :nth-child(5) {
+    grid-area: del;
+    justify-self: end;
+  }
+}
+
+@media (max-width: 430px) {
+  .calHead,
+  .calRow {
+    grid-template-columns: minmax(0, 1fr) minmax(44px, 52px) minmax(44px, 52px) minmax(44px, 52px);
+    gap: 6px;
+    padding: 8px;
+    font-size: 12px;
+  }
+
+  .calHead > div,
+  .calRow > div {
+    min-width: 0;
+  }
 }
 </style>
