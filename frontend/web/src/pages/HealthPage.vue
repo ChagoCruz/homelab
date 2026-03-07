@@ -176,7 +176,7 @@
                   <div>DATE</div>
                   <div>WEIGHT</div>
                 </div>
-                <div v-for="d in dashSeries" :key="d.date" class="dashRow">
+                <div v-for="d in dashSeriesDesc" :key="d.date" class="dashRow">
                   <div>{{ d.date }}</div>
                   <div>{{ d.weight ?? "—" }}</div>
                 </div>
@@ -221,7 +221,7 @@
                   <div>OUT</div>
                   <div>NET</div>
                 </div>
-                <div v-for="d in dashSeries" :key="d.date + '_cal'" class="dashRow calRow">
+                <div v-for="d in dashSeriesDesc" :key="d.date + '_cal'" class="dashRow calRow">
                   <div>{{ d.date }}</div>
                   <div>{{ d.calories_in }}</div>
                   <div>{{ d.calories_out }}</div>
@@ -532,6 +532,9 @@ const weightSparkline = computed(() => {
 const totalIn = computed(() => dashSeries.value.reduce((a, d) => a + (d.calories_in ?? 0), 0));
 const totalOut = computed(() => dashSeries.value.reduce((a, d) => a + (d.calories_out ?? 0), 0));
 const totalNet = computed(() => dashSeries.value.reduce((a, d) => a + (d.calories_net ?? 0), 0));
+const dashSeriesDesc = computed(() =>
+  [...dashSeries.value].sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")))
+);
 
 onMounted(() => {
   loadAll(true);
