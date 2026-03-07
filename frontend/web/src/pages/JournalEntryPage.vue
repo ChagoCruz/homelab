@@ -253,8 +253,9 @@ async function submit() {
 
 .textarea {
   width: 100%;
-  min-height: clamp(360px, 62vh, 760px);
+  min-height: clamp(220px, 46vh, 520px);
   resize: none;
+  box-sizing: border-box;
   background: transparent;
   color: var(--fg);
   border: 1px solid var(--line2);
