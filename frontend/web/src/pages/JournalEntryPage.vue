@@ -228,11 +228,14 @@ async function submit() {
   border-bottom: 1px solid var(--line);
   padding-bottom: 14px;
   margin-bottom: 16px;
+  position: relative;
+  z-index: 1;
 }
 
 .title {
   margin: 0;
   font-size: clamp(28px, 4vw, 52px);
+  color: var(--fg);
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -249,6 +252,8 @@ async function submit() {
   border-radius: var(--radius);
   padding: 14px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+  position: relative;
+  z-index: 1;
 }
 
 .textarea {
@@ -355,7 +360,7 @@ async function submit() {
 .history-date {
   margin: 0 0 8px;
   font-size: 16px;
-  color: var(--muted);
+  color: var(--fg);
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
@@ -363,6 +368,7 @@ async function submit() {
 .history-content {
   margin: 0;
   white-space: pre-wrap;
+  color: var(--fg);
   font-size: clamp(18px, 2.2vw, 24px);
   line-height: 1.35;
   letter-spacing: 0.04em;
@@ -386,6 +392,7 @@ async function submit() {
   );
   mix-blend-mode: overlay;
   opacity: 0.35;
+  z-index: 0;
 }
 
 .vignette {
@@ -394,5 +401,6 @@ async function submit() {
   inset: 0;
   background: radial-gradient(circle at center, rgba(0,0,0,0) 35%, rgba(0,0,0,0.6) 100%);
   opacity: 0.9;
+  z-index: 0;
 }
 </style>
