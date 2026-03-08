@@ -1,15 +1,19 @@
 import { createRouter, createWebHistory } from "vue-router";
-
+import DashboardPage from "../pages/DashboardPage.vue";
 import JournalEntryPage from "../pages/JournalEntryPage.vue";
 import BillsPage from "../pages/BillsPage.vue";
 import MileagePage from "../pages/MileagePage.vue";
 import HealthPage from "../pages/HealthPage.vue";
+import InsightsPage from "../pages/InsightsPage.vue";
 
 const routes = [
-  { path: "/", redirect: "/journal" },
+  { path: "/", component: DashboardPage },
 
   { path: "/journal", component: JournalEntryPage },
   { path: "/bills", component: BillsPage },
+
+  // AI insights
+  { path: "/insights", component: InsightsPage },
 
   // keep old route working
   { path: "/mileage", component: MileagePage },

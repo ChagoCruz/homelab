@@ -1,12 +1,12 @@
 <template>
   <header class="top">
-    <div class="brand">HOMELAB</div>
+    <RouterLink to="/" class="brand">HOMELAB</RouterLink>
 
     <nav class="nav">
       <RouterLink to="/journal">JOURNAL</RouterLink>
       <RouterLink to="/bills">BILLS</RouterLink>
+      <RouterLink to="/insights">INSIGHTS</RouterLink>
 
-      <!-- STATS dropdown -->
       <div class="dropdown" ref="dropdownEl">
         <button
           class="dropbtn"
@@ -18,8 +18,12 @@
         </button>
 
         <div class="menu" :class="{ open }">
-          <RouterLink class="item" to="/stats/health" @click="open = false">HEALTH</RouterLink>
-          <RouterLink class="item" to="/stats/car" @click="open = false">CAR</RouterLink>
+          <RouterLink class="item" to="/stats/health" @click="open = false">
+            HEALTH
+          </RouterLink>
+          <RouterLink class="item" to="/stats/car" @click="open = false">
+            CAR
+          </RouterLink>
         </div>
       </div>
     </nav>
@@ -38,7 +42,6 @@ function onDocClick(e) {
   const el = dropdownEl.value;
   if (!el) return;
 
-  // Close if click is outside dropdown
   if (!el.contains(e.target)) {
     open.value = false;
   }
