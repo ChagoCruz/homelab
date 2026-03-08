@@ -3,7 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import journal, tarot, bills, car_mileage, expenses, income, health
+from app.api.routes import journal, tarot, bills, car_mileage, expenses, income, health, insights
 
 app = FastAPI(title="Homelab API")
 
@@ -30,6 +30,7 @@ app.include_router(car_mileage.router)
 app.include_router(expenses.router)
 app.include_router(income.router)
 app.include_router(health.router)
+app.include_router(insights.router)
 
 @app.get("/")
 def root():

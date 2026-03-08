@@ -22,8 +22,12 @@ services:
       # NOTE: host is "db" because compose service name
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-homelab}:${POSTGRES_PASSWORD:-homelab}@db:5432/${POSTGRES_DB:-homelab}
       CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173
+      OLLAMA_URL: ${OLLAMA_URL}
+      OLLAMA_MODEL: ${OLLAMA_MODEL}
     ports:
       - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   web:
     build:
