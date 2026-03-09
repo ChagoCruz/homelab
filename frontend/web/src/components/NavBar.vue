@@ -3,9 +3,14 @@
     <RouterLink to="/" class="brand">HOMELAB</RouterLink>
 
     <nav class="nav">
-      <RouterLink to="/journal">JOURNAL</RouterLink>
-      <RouterLink to="/bills">BILLS</RouterLink>
-      <RouterLink to="/insights">INSIGHTS</RouterLink>
+      <RouterLink to="/journal">
+        <span class="label-full">JOURNAL</span>
+        <span class="label-short">JRNL</span>
+      </RouterLink>
+      <RouterLink to="/insights">
+        <span class="label-full">INSIGHTS</span>
+        <span class="label-short">AI</span>
+      </RouterLink>
 
       <div class="dropdown" ref="dropdownEl">
         <button
@@ -20,6 +25,9 @@
         <div class="menu" :class="{ open }">
           <RouterLink class="item" to="/stats/health" @click="open = false">
             HEALTH
+          </RouterLink>
+          <RouterLink class="item" to="/bills" @click="open = false">
+            BILLS
           </RouterLink>
           <RouterLink class="item" to="/stats/car" @click="open = false">
             CAR
@@ -74,7 +82,7 @@ onBeforeUnmount(() => {
 .nav {
   display: flex;
   gap: 14px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   align-items: center;
 }
@@ -139,5 +147,29 @@ a.router-link-active {
 .item:hover {
   border-color: var(--line);
   background: rgba(255, 255, 255, 0.06);
+}
+
+.label-short {
+  display: none;
+}
+
+@media (max-width: 420px) {
+  .nav {
+    gap: 8px;
+  }
+
+  a,
+  .dropbtn {
+    padding: 6px 8px;
+    letter-spacing: 0.06em;
+  }
+
+  .label-full {
+    display: none;
+  }
+
+  .label-short {
+    display: inline;
+  }
 }
 </style>
