@@ -10,7 +10,7 @@
 <img src="assets/screenshots/home_page.png" width="900"/>
 </p>
 
-A self-hosted platform for managing personal data, analytics, and AI-powered insights.
+A self-hosted platform for tracking and analyzing personal data such as finances, health, journaling, and productivity.
 
 ---
 
@@ -38,7 +38,7 @@ The system is designed to run locally or on a private server using containerized
 - [Remote Access](#-remote-access)
 - [Roadmap](#-roadmap)
 - [Long-Term Vision](#-long-term-vision)
-- [Engineering Concepts Demonstrated] (#-engineering-concepts-demonstrated)
+- [Engineering Concepts Demonstrated](#-engineering-concepts-demonstrated)
 - [Why This Project Exists](#-why-this-project-exists)
 
 ---
@@ -284,12 +284,6 @@ http://localhost:5173
 ## 🖥 Interface
 
 Terminal-inspired black-and-white interface built with Vue.
-
-### Homelab Dashboard
-
-<p align="center">
-<img src="assets/screenshots/home_page.png" width="800"/>
-</p>
 
 ### Journal Pages
 
