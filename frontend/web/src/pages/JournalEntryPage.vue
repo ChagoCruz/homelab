@@ -10,6 +10,9 @@
         <button class="btn" :class="{ active: mode === 'entry' }" type="button" @click="openEntry">
           ENTRY
         </button>
+        <button class="btn" type="button" @click="goToInsights">
+          INSIGHTS
+        </button>
       </div>
     </header>
 
@@ -31,12 +34,50 @@
 
         <template v-else>
           <article
-            v-for="(entry, idx) in sortedEntries"
-            :key="`${entry.entry_date}-${idx}`"
+            v-for="entry in sortedEntries"
+            :key="entry.id"
             class="history-entry"
           >
-            <h2 class="history-date">{{ formatDate(entry.entry_date) }}</h2>
+            <div class="history-top">
+              <h2 class="history-date">{{ formatDate(entry.entry_date) }}</h2>
+
+              <button
+                class="btn analyze-btn"
+                type="button"
+                :disabled="isAnalyzingEntry(entry.id)"
+                @click="analyzeEntry(entry.id)"
+              >
+                {{ isAnalyzingEntry(entry.id) ? "ANALYZING..." : "ANALYZE" }}
+              </button>
+            </div>
+
             <p class="history-content">{{ entry.content }}</p>
+
+            <div class="entry-meta">
+              <span>ID {{ entry.id }}</span>
+              <span v-if="entry.created_at">CREATED {{ formatDateTime(entry.created_at) }}</span>
+            </div>
+
+            <p
+              v-if="entryInsightErrors[entry.id]"
+              class="insight-error"
+            >
+              {{ entryInsightErrors[entry.id] }}
+            </p>
+
+            <div
+              v-if="entryInsights[entry.id] && entryInsights[entry.id].length"
+              class="insight-box"
+            >
+              <div class="insight-header">
+                <span class="insight-label">LATEST ANALYSIS</span>
+                <span class="insight-timestamp">
+                  {{ formatDateTime(entryInsights[entry.id][0].created_at) }}
+                </span>
+              </div>
+
+              <pre class="insight-text">{{ entryInsights[entry.id][0].insight_text }}</pre>
+            </div>
           </article>
         </template>
       </div>
@@ -66,6 +107,9 @@
 
 <script setup>
 import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
+
+const router = useRouter();
 
 const mode = ref("entry");
 const text = ref("");
@@ -77,12 +121,23 @@ const historyError = ref("");
 const hasLoadedEntries = ref(false);
 const maxLen = 8000;
 
+const entryInsights = ref({});
+const entryInsightErrors = ref({});
+const analyzingIds = ref(new Set());
+
+const baseUrl = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+
 const today = new Date();
 const displayDate = computed(() =>
   today.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })
 );
+
 const sortedEntries = computed(() =>
-  [...entries.value].sort((a, b) => entryTimestamp(b.entry_date) - entryTimestamp(a.entry_date))
+  [...entries.value].sort((a, b) => {
+    const diff = entryTimestamp(b.entry_date) - entryTimestamp(a.entry_date);
+    if (diff !== 0) return diff;
+    return (b.id ?? 0) - (a.id ?? 0);
+  })
 );
 
 const storageKey = `homelab:journal:${getLocalDateString()}`;
@@ -95,7 +150,7 @@ onMounted(() => {
 function flash(msg) {
   status.value = msg;
   window.clearTimeout(flash._t);
-  flash._t = window.setTimeout(() => (status.value = ""), 2000);
+  flash._t = window.setTimeout(() => (status.value = ""), 2200);
 }
 
 function saveLocal() {
@@ -110,6 +165,10 @@ function openEntry() {
 async function openReflect() {
   mode.value = "reflect";
   await loadEntries();
+}
+
+function goToInsights() {
+  router.push("/journal/insights");
 }
 
 function parseEntryDate(value) {
@@ -132,33 +191,23 @@ function entryTimestamp(value) {
 function formatDate(value) {
   const date = parseEntryDate(value);
   if (!date) return value;
-  return date.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "long",
+    day: "numeric"
+  });
 }
 
-async function loadEntries(force = false) {
-  if (isLoadingEntries.value) return;
-  if (hasLoadedEntries.value && !force) return;
-
-  isLoadingEntries.value = true;
-  historyError.value = "";
-
-  const baseUrl = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
-
-  try {
-    const res = await fetch(`${baseUrl}/journal/`);
-    if (!res.ok) {
-      const msg = await res.text().catch(() => "");
-      throw new Error(msg || `HTTP ${res.status}`);
-    }
-
-    const data = await res.json();
-    entries.value = Array.isArray(data) ? data : [];
-    hasLoadedEntries.value = true;
-  } catch (e) {
-    historyError.value = `Unable to load entries: ${e.message}`;
-  } finally {
-    isLoadingEntries.value = false;
-  }
+function formatDateTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
 }
 
 function getLocalDateString() {
@@ -172,18 +221,97 @@ function getLocalDateString() {
   );
 }
 
+function isAnalyzingEntry(id) {
+  return analyzingIds.value.has(id);
+}
+
+async function loadEntryInsights(journalId) {
+  try {
+    const res = await fetch(`${baseUrl}/insights/journal/${journalId}`);
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "");
+      throw new Error(msg || `HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    entryInsights.value = {
+      ...entryInsights.value,
+      [journalId]: Array.isArray(data) ? data : []
+    };
+
+    entryInsightErrors.value = {
+      ...entryInsightErrors.value,
+      [journalId]: ""
+    };
+  } catch (e) {
+    entryInsightErrors.value = {
+      ...entryInsightErrors.value,
+      [journalId]: `Unable to load analysis: ${e.message}`
+    };
+  }
+}
+
+async function loadEntries(force = false) {
+  if (isLoadingEntries.value) return;
+  if (hasLoadedEntries.value && !force) return;
+
+  isLoadingEntries.value = true;
+  historyError.value = "";
+
+  try {
+    const res = await fetch(`${baseUrl}/journal/`);
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "");
+      throw new Error(msg || `HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    entries.value = Array.isArray(data) ? data : [];
+    hasLoadedEntries.value = true;
+
+    await Promise.all(entries.value.map((entry) => loadEntryInsights(entry.id)));
+  } catch (e) {
+    historyError.value = `Unable to load entries: ${e.message}`;
+  } finally {
+    isLoadingEntries.value = false;
+  }
+}
+
+async function analyzeEntry(journalId) {
+  analyzingIds.value.add(journalId);
+  entryInsightErrors.value = {
+    ...entryInsightErrors.value,
+    [journalId]: ""
+  };
+
+  try {
+    const res = await fetch(`${baseUrl}/insights/journal/${journalId}`, {
+      method: "POST"
+    });
+
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "");
+      throw new Error(msg || `HTTP ${res.status}`);
+    }
+
+    await loadEntryInsights(journalId);
+    flash("ANALYSIS SAVED");
+  } catch (e) {
+    entryInsightErrors.value = {
+      ...entryInsightErrors.value,
+      [journalId]: `Unable to analyze entry: ${e.message}`
+    };
+    flash("ANALYSIS FAILED");
+  } finally {
+    analyzingIds.value.delete(journalId);
+  }
+}
+
 async function submit() {
   isSubmitting.value = true;
   status.value = "";
 
-  // IMPORTANT:
-  // - local dev (running backend on host): http://localhost:8000
-  // - docker compose (frontend container talking to api container): http://api:8000
-  const baseUrl = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
-
   try {
-    // Match your schema fields if needed; this is a safe starting payload.
-    // Your JournalCreate likely has: date/content (or similar). Adjust once you confirm.
     const payload = {
       entry_date: getLocalDateString(),
       content: text.value
@@ -293,6 +421,7 @@ async function submit() {
   font-size: 16px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+  flex-wrap: wrap;
 }
 
 .status {
@@ -329,6 +458,11 @@ async function submit() {
   border-color: rgba(255, 255, 255, 0.35);
 }
 
+.analyze-btn {
+  font-size: 14px;
+  padding: 8px 10px;
+}
+
 .history {
   min-height: clamp(360px, 62vh, 760px);
   border: 1px solid var(--line2);
@@ -347,8 +481,8 @@ async function submit() {
 
 .history-entry {
   border-bottom: 1px solid var(--line2);
-  padding-bottom: 14px;
-  margin-bottom: 14px;
+  padding-bottom: 18px;
+  margin-bottom: 18px;
 }
 
 .history-entry:last-of-type {
@@ -357,8 +491,16 @@ async function submit() {
   padding-bottom: 0;
 }
 
+.history-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
 .history-date {
-  margin: 0 0 8px;
+  margin: 0;
   font-size: 16px;
   color: var(--fg);
   letter-spacing: 0.1em;
@@ -371,6 +513,59 @@ async function submit() {
   color: var(--fg);
   font-size: clamp(18px, 2.2vw, 24px);
   line-height: 1.35;
+  letter-spacing: 0.04em;
+}
+
+.entry-meta {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.insight-box {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.insight-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.insight-label,
+.insight-timestamp {
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.insight-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg);
+  font-size: 15px;
+  line-height: 1.45;
+  font-family: inherit;
+}
+
+.insight-error {
+  margin: 12px 0 0;
+  color: #ffb3b3;
+  font-size: 14px;
   letter-spacing: 0.04em;
 }
 
@@ -402,5 +597,27 @@ async function submit() {
   background: radial-gradient(circle at center, rgba(0,0,0,0) 35%, rgba(0,0,0,0.6) 100%);
   opacity: 0.9;
   z-index: 0;
+}
+
+@media (max-width: 700px) {
+  .header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .history-top {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 </style>

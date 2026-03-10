@@ -123,64 +123,70 @@ CREATE TABLE IF NOT EXISTS convo (
 ------------------------------------------------------------------------
 -- ai_insights.sql
 CREATE TABLE IF NOT EXISTS ai_insights (
-    id BIGSERIAL PRIMARY KEY,
-    insight_type TEXT NOT NULL CHECK (
-        insight_type IN (
-            'daily_summary',
-            'daily_observation',
-            'weekly_report',
-            'pattern_detection',
-            'forecast',
-            'mental_health',
-            'habit_insight'
-        )
-    ),
-    insight_date DATE NOT NULL DEFAULT CURRENT_DATE,
-    period_start DATE,
-    period_end DATE,
-    category TEXT NOT NULL DEFAULT 'general' CHECK (
-        category IN (
-            'general',
-            'health',
-            'weight',
-            'blood_pressure',
-            'calories',
-            'journal',
-            'alcohol',
-            'diet'
-        )
-    ),
-    model_provider TEXT NOT NULL DEFAULT 'ollama',
-    model_name TEXT NOT NULL DEFAULT 'gemma3:4b',
-    prompt_version TEXT NOT NULL DEFAULT 'v1',
-    input_payload JSONB,
-    insight_text TEXT NOT NULL,
-    structured_output JSONB,
-    status TEXT NOT NULL DEFAULT 'complete' CHECK (
-        status IN ('pending', 'complete', 'failed')
-    ),
-    error_message TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  id BIGSERIAL PRIMARY KEY,
+  insight_type TEXT NOT NULL CHECK (
+    insight_type IN (
+      'daily_summary',
+      'daily_observation',
+      'weekly_report',
+      'pattern_detection',
+      'forecast',
+      'mental_health',
+      'habit_insight',
+      'journal_entry_analysis',
+      'journal_weekly_summary'
+    )
+  ),
+  insight_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  period_start DATE,
+  period_end DATE,
+  category TEXT NOT NULL DEFAULT 'general' CHECK (
+    category IN (
+      'general',
+      'health',
+      'weight',
+      'blood_pressure',
+      'calories',
+      'journal',
+      'alcohol',
+      'diet'
+    )
+  ),
+  source_table TEXT,
+  source_id BIGINT,
+  model_provider TEXT NOT NULL DEFAULT 'ollama',
+  model_name TEXT NOT NULL DEFAULT 'gemma3:4b',
+  prompt_version TEXT NOT NULL DEFAULT 'v1',
+  input_payload JSONB,
+  insight_text TEXT NOT NULL,
+  structured_output JSONB,
+  status TEXT NOT NULL DEFAULT 'complete'
+    CHECK (status IN ('pending', 'complete', 'failed')),
+  error_message TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_insights_type
-    ON ai_insights (insight_type);
+  ON ai_insights (insight_type);
 
 CREATE INDEX IF NOT EXISTS idx_ai_insights_insight_date
-    ON ai_insights (insight_date DESC);
+  ON ai_insights (insight_date DESC);
 
 CREATE INDEX IF NOT EXISTS idx_ai_insights_period
-    ON ai_insights (period_start, period_end);
+  ON ai_insights (period_start, period_end);
 
 CREATE INDEX IF NOT EXISTS idx_ai_insights_category
-    ON ai_insights (category);
+  ON ai_insights (category);
+
+CREATE INDEX IF NOT EXISTS idx_ai_insights_source
+  ON ai_insights (source_table, source_id);
 
 CREATE INDEX IF NOT EXISTS idx_ai_insights_input_payload_gin
-    ON ai_insights USING GIN (input_payload);
+  ON ai_insights USING GIN (input_payload);
 
 CREATE INDEX IF NOT EXISTS idx_ai_insights_structured_output_gin
-    ON ai_insights USING GIN (structured_output);
+  ON ai_insights USING GIN (structured_output);
 
 CREATE OR REPLACE FUNCTION set_ai_insights_updated_at()
 RETURNS TRIGGER AS $$

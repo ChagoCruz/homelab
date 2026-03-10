@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Date, Float, Boolean
+from sqlalchemy import Column, Integer, String, Date, Float, Boolean, DateTime, Text
+from sqlalchemy.sql import func
 from app.db.base import Base
 
 
@@ -46,7 +47,8 @@ class Journal(Base):
 
   id = Column(Integer, primary_key=True, index=True)
   entry_date = Column(Date)
-  content = Column(String)
+  content = Column(Text)
+  created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class TarotCard(Base):

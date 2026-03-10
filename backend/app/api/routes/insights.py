@@ -1,14 +1,22 @@
-from datetime import date, timedelta
+import os
 import json
+from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.db.models import Journal
 from app.db.session import get_db
-from app.services.ollama_service import generate_weekly_report
+from app.services.claude_service import (
+    generate_weekly_health_insight,
+    generate_journal_entry_analysis,
+    generate_journal_period_summary,
+)
 
 router = APIRouter(prefix="/insights", tags=["insights"])
+
+MODEL_NAME = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
 
 
 @router.post("/weekly")
@@ -22,10 +30,7 @@ def create_weekly_insight(db: Session = Depends(get_db)):
                 log_date,
                 SUM(calories) AS total_calories,
                 MAX(
-                    CASE
-                        WHEN meal = 'drink' AND food ILIKE 'beer%' THEN 1
-                        ELSE 0
-                    END
+                    CASE WHEN meal = 'drink' AND food ILIKE 'beer%' THEN 1 ELSE 0 END
                 ) AS had_alcohol
             FROM diet
             WHERE log_date BETWEEN :period_start AND :period_end
@@ -71,8 +76,7 @@ def create_weekly_insight(db: Session = Depends(get_db)):
     ).fetchone()
 
     metrics = row.metrics if row and row.metrics else {}
-
-    insight_text = generate_weekly_report(metrics)
+    insight_text = generate_weekly_health_insight(metrics)
 
     insert_sql = text("""
         INSERT INTO ai_insights (
@@ -94,9 +98,9 @@ def create_weekly_insight(db: Session = Depends(get_db)):
             :period_start,
             :period_end,
             'health',
-            'ollama',
-            'gemma3:4b',
-            'v1',
+            'anthropic',
+            :model_name,
+            'health-v1',
             CAST(:input_payload AS jsonb),
             :insight_text,
             'complete'
@@ -109,6 +113,7 @@ def create_weekly_insight(db: Session = Depends(get_db)):
         {
             "period_start": period_start,
             "period_end": period_end,
+            "model_name": MODEL_NAME,
             "input_payload": json.dumps(metrics, default=str),
             "insight_text": insight_text,
         },
@@ -124,6 +129,206 @@ def create_weekly_insight(db: Session = Depends(get_db)):
         "metrics": metrics,
     }
 
+
+@router.post("/journal/weekly")
+def analyze_journal_weekly(db: Session = Depends(get_db)):
+    period_end = date.today()
+    period_start = period_end - timedelta(days=6)
+
+    entries = (
+        db.query(Journal)
+        .filter(Journal.entry_date >= period_start, Journal.entry_date <= period_end)
+        .order_by(Journal.entry_date.asc(), Journal.id.asc())
+        .all()
+    )
+
+    if not entries:
+        raise HTTPException(status_code=404, detail="No journal entries found for this period")
+
+    payload = [
+        {
+            "journal_id": row.id,
+            "entry_date": row.entry_date,
+            "content": row.content,
+            "word_count": len((row.content or "").split()),
+        }
+        for row in entries
+    ]
+
+    insight_text = generate_journal_period_summary(payload)
+
+    structured_output = {
+        "entry_count": len(payload),
+        "journal_ids": [x["journal_id"] for x in payload],
+    }
+
+    sql = text("""
+        INSERT INTO ai_insights (
+            insight_type,
+            insight_date,
+            period_start,
+            period_end,
+            category,
+            model_provider,
+            model_name,
+            prompt_version,
+            input_payload,
+            insight_text,
+            structured_output,
+            status
+        )
+        VALUES (
+            'journal_weekly_summary',
+            CURRENT_DATE,
+            :period_start,
+            :period_end,
+            'journal',
+            'anthropic',
+            :model_name,
+            'journal-v1',
+            CAST(:input_payload AS jsonb),
+            :insight_text,
+            CAST(:structured_output AS jsonb),
+            'complete'
+        )
+        RETURNING id, insight_type, category, insight_text, created_at
+    """)
+
+    result = db.execute(
+        sql,
+        {
+            "period_start": period_start,
+            "period_end": period_end,
+            "model_name": MODEL_NAME,
+            "input_payload": json.dumps(payload, default=str),
+            "insight_text": insight_text,
+            "structured_output": json.dumps(structured_output, default=str),
+        },
+    ).fetchone()
+
+    db.commit()
+
+    return {
+        **dict(result._mapping),
+        "period_start": str(period_start),
+        "period_end": str(period_end),
+        "entry_count": len(payload),
+    }
+
+
+@router.get("/journal/history")
+def get_journal_insight_history(db: Session = Depends(get_db)):
+    rows = db.execute(text("""
+        SELECT
+            id,
+            insight_type,
+            insight_date,
+            period_start,
+            period_end,
+            category,
+            source_table,
+            source_id,
+            insight_text,
+            created_at
+        FROM ai_insights
+        WHERE category = 'journal'
+        ORDER BY created_at DESC
+        LIMIT 20
+    """)).fetchall()
+
+    return [dict(row._mapping) for row in rows]
+
+
+@router.post("/journal/{journal_id}")
+def analyze_journal_entry(journal_id: int, db: Session = Depends(get_db)):
+    journal = db.query(Journal).filter(Journal.id == journal_id).first()
+    if not journal:
+        raise HTTPException(status_code=404, detail="Journal entry not found")
+
+    payload = {
+        "journal_id": journal.id,
+        "entry_date": journal.entry_date,
+        "content": journal.content,
+        "word_count": len((journal.content or "").split()),
+    }
+
+    insight_text = generate_journal_entry_analysis(payload)
+
+    structured_output = {
+        "journal_id": journal.id,
+        "word_count": payload["word_count"],
+    }
+
+    sql = text("""
+        INSERT INTO ai_insights (
+            insight_type,
+            insight_date,
+            category,
+            source_table,
+            source_id,
+            model_provider,
+            model_name,
+            prompt_version,
+            input_payload,
+            insight_text,
+            structured_output,
+            status
+        )
+        VALUES (
+            'journal_entry_analysis',
+            CURRENT_DATE,
+            'journal',
+            'journal',
+            :source_id,
+            'anthropic',
+            :model_name,
+            'journal-v1',
+            CAST(:input_payload AS jsonb),
+            :insight_text,
+            CAST(:structured_output AS jsonb),
+            'complete'
+        )
+        RETURNING id, insight_type, category, insight_text, created_at
+    """)
+
+    result = db.execute(
+        sql,
+        {
+            "source_id": journal.id,
+            "model_name": MODEL_NAME,
+            "input_payload": json.dumps(payload, default=str),
+            "insight_text": insight_text,
+            "structured_output": json.dumps(structured_output, default=str),
+        },
+    ).fetchone()
+
+    db.commit()
+
+    return dict(result._mapping)
+
+
+@router.get("/journal/{journal_id}")
+def get_journal_insights(journal_id: int, db: Session = Depends(get_db)):
+    rows = db.execute(text("""
+        SELECT
+            id,
+            insight_type,
+            insight_date,
+            category,
+            source_table,
+            source_id,
+            insight_text,
+            structured_output,
+            created_at
+        FROM ai_insights
+        WHERE source_table = 'journal'
+          AND source_id = :journal_id
+        ORDER BY created_at DESC
+    """), {"journal_id": journal_id}).fetchall()
+
+    return [dict(row._mapping) for row in rows]
+
+
 @router.get("/latest")
 def get_latest_insight(db: Session = Depends(get_db)):
     row = db.execute(text("""
@@ -134,6 +339,8 @@ def get_latest_insight(db: Session = Depends(get_db)):
             period_start,
             period_end,
             category,
+            source_table,
+            source_id,
             insight_text,
             created_at
         FROM ai_insights
@@ -146,6 +353,7 @@ def get_latest_insight(db: Session = Depends(get_db)):
 
     return dict(row._mapping)
 
+
 @router.get("/history")
 def get_insight_history(db: Session = Depends(get_db)):
     rows = db.execute(text("""
@@ -155,6 +363,8 @@ def get_insight_history(db: Session = Depends(get_db)):
             period_start,
             period_end,
             category,
+            source_table,
+            source_id,
             insight_text,
             created_at
         FROM ai_insights
