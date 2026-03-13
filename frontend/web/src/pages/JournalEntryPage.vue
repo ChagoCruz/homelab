@@ -65,19 +65,40 @@
               {{ entryInsightErrors[entry.id] }}
             </p>
 
-            <div
-              v-if="entryInsights[entry.id] && entryInsights[entry.id].length"
-              class="insight-box"
-            >
-              <div class="insight-header">
-                <span class="insight-label">LATEST ANALYSIS</span>
-                <span class="insight-timestamp">
-                  {{ formatDateTime(entryInsights[entry.id][0].created_at) }}
+            <template v-if="entryInsights[entry.id] && entryInsights[entry.id].length">
+              <button
+                class="summary-toggle"
+                type="button"
+                @click="toggleInsight(entry.id)"
+              >
+                <span
+                  class="summary-arrow"
+                  :class="{ open: isInsightOpen(entry.id) }"
+                  aria-hidden="true"
+                >
+                  ▶
                 </span>
-              </div>
+                <span class="summary-toggle-text">
+                  {{ isInsightOpen(entry.id) ? "HIDE SUMMARY" : "READ SUMMARY" }}
+                </span>
+              </button>
 
-              <pre class="insight-text">{{ entryInsights[entry.id][0].insight_text }}</pre>
-            </div>
+              <transition name="expand">
+                <div
+                  v-if="isInsightOpen(entry.id)"
+                  class="insight-box"
+                >
+                  <div class="insight-header">
+                    <span class="insight-label">LATEST ANALYSIS</span>
+                    <span class="insight-timestamp">
+                      {{ formatDateTime(entryInsights[entry.id][0].created_at) }}
+                    </span>
+                  </div>
+
+                  <pre class="insight-text">{{ entryInsights[entry.id][0].insight_text }}</pre>
+                </div>
+              </transition>
+            </template>
           </article>
         </template>
       </div>
@@ -124,6 +145,7 @@ const maxLen = 8000;
 const entryInsights = ref({});
 const entryInsightErrors = ref({});
 const analyzingIds = ref(new Set());
+const expandedInsights = ref({});
 
 const baseUrl = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
@@ -225,6 +247,17 @@ function isAnalyzingEntry(id) {
   return analyzingIds.value.has(id);
 }
 
+function toggleInsight(id) {
+  expandedInsights.value = {
+    ...expandedInsights.value,
+    [id]: !expandedInsights.value[id]
+  };
+}
+
+function isInsightOpen(id) {
+  return !!expandedInsights.value[id];
+}
+
 async function loadEntryInsights(journalId) {
   try {
     const res = await fetch(`${baseUrl}/insights/journal/${journalId}`);
@@ -295,6 +328,12 @@ async function analyzeEntry(journalId) {
     }
 
     await loadEntryInsights(journalId);
+
+    expandedInsights.value = {
+      ...expandedInsights.value,
+      [journalId]: true
+    };
+
     flash("ANALYSIS SAVED");
   } catch (e) {
     entryInsightErrors.value = {
@@ -527,8 +566,40 @@ async function submit() {
   text-transform: uppercase;
 }
 
-.insight-box {
+.summary-toggle {
   margin-top: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.summary-toggle:hover {
+  color: var(--fg);
+}
+
+.summary-arrow {
+  display: inline-block;
+  transition: transform 0.18s ease;
+}
+
+.summary-arrow.open {
+  transform: rotate(90deg);
+}
+
+.summary-toggle-text {
+  font-size: 13px;
+}
+
+.insight-box {
+  margin-top: 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 12px;
@@ -571,6 +642,26 @@ async function submit() {
 
 .footer.reflect {
   justify-content: flex-start;
+}
+
+.expand-enter-active,
+.expand-leave-active {
+  transition: all 0.18s ease;
+  overflow: hidden;
+}
+
+.expand-enter-from,
+.expand-leave-to {
+  opacity: 0;
+  max-height: 0;
+  transform: translateY(-4px);
+}
+
+.expand-enter-to,
+.expand-leave-from {
+  opacity: 1;
+  max-height: 500px;
+  transform: translateY(0);
 }
 
 /* CRT overlays */
