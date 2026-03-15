@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS blood_pressure
 CREATE TABLE journal (
     id SERIAL PRIMARY KEY,
     entry_date DATE NOT NULL DEFAULT CURRENT_DATE,
-    content TEXT NOT NULL
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE diet (
