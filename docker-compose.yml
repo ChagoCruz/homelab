@@ -36,10 +36,6 @@ services:
       context: ./frontend/web
     container_name: homelab-web
     restart: unless-stopped
-    # Set VITE_API_URL if accessing from a remote host (e.g. via Tailscale).
-    # Defaults to http://localhost:8000 when unset.
-    # environment:
-    #   - VITE_API_URL=http://api:8000
     ports:
       - "5173:5173"
     depends_on:

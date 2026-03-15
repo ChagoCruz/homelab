@@ -353,11 +353,10 @@ Production infrastructure is accessed securely using:
 - Restricted database ports
 - No public database exposure
 
-To access the web UI from a remote host, set `VITE_API_URL` in `docker-compose.yml` to the backend's reachable address:
+To access the web UI from a remote host (e.g. via Tailscale), update `VITE_API_URL` in `frontend/web/.env` to the backend's reachable address:
 
-```yaml
-environment:
-  - VITE_API_URL=http://<your-server-ip>:8000
+```
+VITE_API_URL=http://<your-server-ip>:8000
 ```
 
 ---
