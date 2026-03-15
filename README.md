@@ -233,6 +233,9 @@ Create a `.env` file in the project root:
 POSTGRES_DB=homelab
 POSTGRES_USER=homelab
 POSTGRES_PASSWORD=homelab
+
+# Required for AI insight features
+ANTHROPIC_API_KEY=your-key-here
 ```
 
 ---
