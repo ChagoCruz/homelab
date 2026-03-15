@@ -1,11 +1,8 @@
 from typing import Any
 import os
-import logging
 
 from anthropic import Anthropic
 from fastapi import HTTPException
-
-logger = logging.getLogger(__name__)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
