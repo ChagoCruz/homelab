@@ -1,0 +1,1 @@
+../seed/001_tarot_cards_inserts.sql
