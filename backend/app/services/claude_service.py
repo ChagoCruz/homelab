@@ -7,10 +7,19 @@ from fastapi import HTTPException
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
 
-if not ANTHROPIC_API_KEY:
-    raise RuntimeError("ANTHROPIC_API_KEY is not set")
+_client = None
 
-client = Anthropic(api_key=ANTHROPIC_API_KEY)
+
+def _get_client() -> Anthropic:
+    global _client
+    if _client is None:
+        if not ANTHROPIC_API_KEY:
+            raise HTTPException(
+                status_code=503,
+                detail="AI insights unavailable: ANTHROPIC_API_KEY is not configured.",
+            )
+        _client = Anthropic(api_key=ANTHROPIC_API_KEY)
+    return _client
 
 
 def _truncate_text(text: str, max_chars: int = 2500) -> str:
@@ -24,7 +33,7 @@ def _truncate_text(text: str, max_chars: int = 2500) -> str:
 
 def _message(system_prompt: str, user_prompt: str, max_tokens: int = 500) -> str:
     try:
-        response = client.messages.create(
+        response = _get_client().messages.create(
             model=ANTHROPIC_MODEL,
             max_tokens=max_tokens,
             system=system_prompt,

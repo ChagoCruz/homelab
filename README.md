@@ -233,6 +233,9 @@ Create a `.env` file in the project root:
 POSTGRES_DB=homelab
 POSTGRES_USER=homelab
 POSTGRES_PASSWORD=homelab
+
+# Required for AI insight features
+ANTHROPIC_API_KEY=your-key-here
 ```
 
 ---
@@ -349,6 +352,12 @@ Production infrastructure is accessed securely using:
 - SSH over private network
 - Restricted database ports
 - No public database exposure
+
+To access the web UI from a remote host (e.g. via Tailscale), update `VITE_API_URL` in `frontend/web/.env` to the backend's reachable address:
+
+```
+VITE_API_URL=http://<your-server-ip>:8000
+```
 
 ---
 
