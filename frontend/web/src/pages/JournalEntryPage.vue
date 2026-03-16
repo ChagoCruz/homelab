@@ -40,23 +40,9 @@
           >
             <div class="history-top">
               <h2 class="history-date">{{ formatDate(entry.entry_date) }}</h2>
-
-              <button
-                class="btn analyze-btn"
-                type="button"
-                :disabled="isAnalyzingEntry(entry.id)"
-                @click="analyzeEntry(entry.id)"
-              >
-                {{ isAnalyzingEntry(entry.id) ? "ANALYZING..." : "ANALYZE" }}
-              </button>
             </div>
 
             <p class="history-content">{{ entry.content }}</p>
-
-            <div class="entry-meta">
-              <span>ID {{ entry.id }}</span>
-              <span v-if="entry.created_at">CREATED {{ formatDateTime(entry.created_at) }}</span>
-            </div>
 
             <p
               v-if="entryInsightErrors[entry.id]"
@@ -144,7 +130,6 @@ const maxLen = 8000;
 
 const entryInsights = ref({});
 const entryInsightErrors = ref({});
-const analyzingIds = ref(new Set());
 const expandedInsights = ref({});
 
 const baseUrl = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -243,10 +228,6 @@ function getLocalDateString() {
   );
 }
 
-function isAnalyzingEntry(id) {
-  return analyzingIds.value.has(id);
-}
-
 function toggleInsight(id) {
   expandedInsights.value = {
     ...expandedInsights.value,
@@ -311,39 +292,31 @@ async function loadEntries(force = false) {
 }
 
 async function analyzeEntry(journalId) {
-  analyzingIds.value.add(journalId);
   entryInsightErrors.value = {
     ...entryInsightErrors.value,
     [journalId]: ""
   };
 
-  try {
-    const res = await fetch(`${baseUrl}/insights/journal/${journalId}`, {
-      method: "POST"
-    });
+  const res = await fetch(`${baseUrl}/insights/journal/${journalId}`, {
+    method: "POST"
+  });
 
-    if (!res.ok) {
-      const msg = await res.text().catch(() => "");
-      throw new Error(msg || `HTTP ${res.status}`);
-    }
-
-    await loadEntryInsights(journalId);
-
-    expandedInsights.value = {
-      ...expandedInsights.value,
-      [journalId]: true
-    };
-
-    flash("ANALYSIS SAVED");
-  } catch (e) {
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "");
+    const error = new Error(msg || `HTTP ${res.status}`);
     entryInsightErrors.value = {
       ...entryInsightErrors.value,
-      [journalId]: `Unable to analyze entry: ${e.message}`
+      [journalId]: `Unable to analyze entry: ${error.message}`
     };
-    flash("ANALYSIS FAILED");
-  } finally {
-    analyzingIds.value.delete(journalId);
+    throw error;
   }
+
+  await loadEntryInsights(journalId);
+
+  expandedInsights.value = {
+    ...expandedInsights.value,
+    [journalId]: true
+  };
 }
 
 async function submit() {
@@ -367,11 +340,28 @@ async function submit() {
       throw new Error(msg || `HTTP ${res.status}`);
     }
 
+    const createdEntry = await res.json();
+    const journalId = createdEntry?.id;
+
+    if (createdEntry && typeof createdEntry === "object" && journalId != null) {
+      entries.value = [createdEntry, ...entries.value.filter((entry) => entry.id !== journalId)];
+    }
+
     localStorage.removeItem(storageKey);
     hasLoadedEntries.value = false;
     text.value = "";
-    flash("SUBMITTED");
-    window.setTimeout(() => window.location.reload(), 120);
+
+    if (journalId == null) {
+      flash("SUBMITTED");
+      return;
+    }
+
+    try {
+      await analyzeEntry(journalId);
+      flash("SUBMITTED + ANALYZED");
+    } catch {
+      flash("SUBMITTED; ANALYSIS FAILED");
+    }
   } catch (e) {
     flash(`ERROR: ${e.message}`);
   } finally {
@@ -497,11 +487,6 @@ async function submit() {
   border-color: rgba(255, 255, 255, 0.35);
 }
 
-.analyze-btn {
-  font-size: 14px;
-  padding: 8px 10px;
-}
-
 .history {
   min-height: clamp(360px, 62vh, 760px);
   border: 1px solid var(--line2);
@@ -553,17 +538,6 @@ async function submit() {
   font-size: clamp(18px, 2.2vw, 24px);
   line-height: 1.35;
   letter-spacing: 0.04em;
-}
-
-.entry-meta {
-  display: flex;
-  gap: 14px;
-  flex-wrap: wrap;
-  margin-top: 10px;
-  color: var(--muted);
-  font-size: 13px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
 }
 
 .summary-toggle {
