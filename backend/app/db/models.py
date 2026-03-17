@@ -1,6 +1,19 @@
-from sqlalchemy import Column, Integer, String, Date, Float, Boolean, DateTime, Text
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Date,
+    Float,
+    Boolean,
+    BigInteger,
+    Text,
+    DateTime,
+    ForeignKey,
+    Numeric,
+)
 from sqlalchemy.sql import func
 from app.db.base import Base
+from sqlalchemy.dialects.postgresql import JSONB
 
 
 class Bill(Base):
@@ -98,3 +111,61 @@ class Workout(Base):
   workout_date = Column(Date)
   workout = Column(String)
   calories_burnt = Column(Integer)
+
+class JournalEntryAnalysis(Base):
+  __tablename__ = "journal_entry_analysis"
+
+  id = Column(BigInteger, primary_key=True, index=True)
+  journal_entry_id = Column(BigInteger, ForeignKey("journal.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+
+  model_provider = Column(String, nullable=False, default="anthropic")
+  model_name = Column(String, nullable=False, default="claude-haiku-4-5")
+  prompt_version = Column(String, nullable=False, default="v2")
+
+  mood_score = Column(Numeric(4, 2), nullable=True)
+  emotional_tone = Column(String, nullable=True)
+
+  key_emotions = Column(JSONB, nullable=False, default=list)
+  stressors = Column(JSONB, nullable=False, default=list)
+  positive_signals = Column(JSONB, nullable=False, default=list)
+  thinking_patterns = Column(JSONB, nullable=False, default=list)
+  life_direction_signals = Column(JSONB, nullable=False, default=list)
+  reflection_questions = Column(JSONB, nullable=False, default=list)
+
+  insight = Column(Text, nullable=True)
+  encouragement = Column(Text, nullable=True)
+  raw_output = Column(JSONB, nullable=True)
+
+  created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class JournalPatternProfile(Base):
+  __tablename__ = "journal_pattern_profile"
+
+  id = Column(BigInteger, primary_key=True, index=True)
+
+  period_type = Column(String, nullable=False)  # weekly, monthly, yearly, rolling_10_entries
+  period_start = Column(Date, nullable=False, index=True)
+  period_end = Column(Date, nullable=False, index=True)
+  entry_count = Column(Integer, nullable=False, default=0)
+
+  model_provider = Column(String, nullable=False, default="anthropic")
+  model_name = Column(String, nullable=False, default="claude-haiku-4-5")
+  prompt_version = Column(String, nullable=False, default="v2")
+
+  average_mood_score = Column(Numeric(4, 2), nullable=True)
+
+  dominant_emotions = Column(JSONB, nullable=False, default=list)
+  recurring_stressors = Column(JSONB, nullable=False, default=list)
+  recurring_positive_signals = Column(JSONB, nullable=False, default=list)
+  recurring_thinking_patterns = Column(JSONB, nullable=False, default=list)
+  recurring_life_direction_signals = Column(JSONB, nullable=False, default=list)
+  core_values = Column(JSONB, nullable=False, default=list)
+  motivation_drivers = Column(JSONB, nullable=False, default=list)
+  growth_signals = Column(JSONB, nullable=False, default=list)
+  risk_signals = Column(JSONB, nullable=False, default=list)
+
+  pattern_summary = Column(Text, nullable=True)
+  raw_output = Column(JSONB, nullable=True)
+
+  created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

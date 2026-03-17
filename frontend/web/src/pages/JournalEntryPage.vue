@@ -51,7 +51,7 @@
               {{ entryInsightErrors[entry.id] }}
             </p>
 
-            <template v-if="entryInsights[entry.id] && entryInsights[entry.id].length">
+            <template v-if="entryInsights[entry.id]">
               <button
                 class="summary-toggle"
                 type="button"
@@ -65,7 +65,7 @@
                   ▶
                 </span>
                 <span class="summary-toggle-text">
-                  {{ isInsightOpen(entry.id) ? "HIDE SUMMARY" : "READ SUMMARY" }}
+                  {{ isInsightOpen(entry.id) ? "HIDE INSIGHT" : "READ INSIGHT" }}
                 </span>
               </button>
 
@@ -75,13 +75,88 @@
                   class="insight-box"
                 >
                   <div class="insight-header">
-                    <span class="insight-label">LATEST ANALYSIS</span>
+                    <span class="insight-label">ENTRY INSIGHT</span>
                     <span class="insight-timestamp">
-                      {{ formatDateTime(entryInsights[entry.id][0].created_at) }}
+                      {{ formatDateTime(entryInsights[entry.id].created_at) }}
                     </span>
                   </div>
 
-                  <pre class="insight-text">{{ entryInsights[entry.id][0].insight_text }}</pre>
+                  <div class="insight-grid">
+                    <div class="insight-stat">
+                      <span class="insight-stat-label">MOOD</span>
+                      <span class="insight-stat-value">
+                        {{ formatMood(entryInsights[entry.id].mood_score) }}
+                      </span>
+                    </div>
+
+                    <div class="insight-stat">
+                      <span class="insight-stat-label">TONE</span>
+                      <span class="insight-stat-value">
+                        {{ entryInsights[entry.id].emotional_tone || "—" }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <section v-if="entryInsights[entry.id].insight" class="insight-section">
+                    <h3 class="insight-section-title">INSIGHT</h3>
+                    <p class="insight-paragraph">{{ entryInsights[entry.id].insight }}</p>
+                  </section>
+
+                  <section
+                    v-if="entryInsights[entry.id].reflection_questions?.length"
+                    class="insight-section"
+                  >
+                    <h3 class="insight-section-title">REFLECTION QUESTIONS</h3>
+                    <ul class="insight-list">
+                      <li
+                        v-for="(question, idx) in entryInsights[entry.id].reflection_questions"
+                        :key="idx"
+                      >
+                        {{ question }}
+                      </li>
+                    </ul>
+                  </section>
+
+                  <section
+                    v-if="entryInsights[entry.id].stressors?.length"
+                    class="insight-section"
+                  >
+                    <h3 class="insight-section-title">STRESSORS</h3>
+                    <ul class="insight-list">
+                      <li v-for="(item, idx) in entryInsights[entry.id].stressors" :key="idx">
+                        {{ item }}
+                      </li>
+                    </ul>
+                  </section>
+
+                  <section
+                    v-if="entryInsights[entry.id].positive_signals?.length"
+                    class="insight-section"
+                  >
+                    <h3 class="insight-section-title">POSITIVE SIGNALS</h3>
+                    <ul class="insight-list">
+                      <li v-for="(item, idx) in entryInsights[entry.id].positive_signals" :key="idx">
+                        {{ item }}
+                      </li>
+                    </ul>
+                  </section>
+
+                  <section
+                    v-if="entryInsights[entry.id].thinking_patterns?.length"
+                    class="insight-section"
+                  >
+                    <h3 class="insight-section-title">THINKING PATTERNS</h3>
+                    <ul class="insight-list">
+                      <li v-for="(item, idx) in entryInsights[entry.id].thinking_patterns" :key="idx">
+                        {{ item }}
+                      </li>
+                    </ul>
+                  </section>
+
+                  <section v-if="entryInsights[entry.id].encouragement" class="insight-section">
+                    <h3 class="insight-section-title">ENCOURAGEMENT</h3>
+                    <p class="insight-paragraph">{{ entryInsights[entry.id].encouragement }}</p>
+                  </section>
                 </div>
               </transition>
             </template>
@@ -241,16 +316,31 @@ function isInsightOpen(id) {
 
 async function loadEntryInsights(journalId) {
   try {
-    const res = await fetch(`${baseUrl}/insights/journal/${journalId}`);
+    const res = await fetch(`${baseUrl}/journal/${journalId}/analysis`);
+
+    if (res.status === 404) {
+      entryInsights.value = {
+        ...entryInsights.value,
+        [journalId]: null
+      };
+
+      entryInsightErrors.value = {
+        ...entryInsightErrors.value,
+        [journalId]: ""
+      };
+      return;
+    }
+
     if (!res.ok) {
       const msg = await res.text().catch(() => "");
       throw new Error(msg || `HTTP ${res.status}`);
     }
 
     const data = await res.json();
+
     entryInsights.value = {
       ...entryInsights.value,
-      [journalId]: Array.isArray(data) ? data : []
+      [journalId]: data
     };
 
     entryInsightErrors.value = {
@@ -260,7 +350,7 @@ async function loadEntryInsights(journalId) {
   } catch (e) {
     entryInsightErrors.value = {
       ...entryInsightErrors.value,
-      [journalId]: `Unable to load analysis: ${e.message}`
+      [journalId]: `Unable to load insight: ${e.message}`
     };
   }
 }
@@ -289,13 +379,6 @@ async function loadEntries(force = false) {
   } finally {
     isLoadingEntries.value = false;
   }
-}
-
-async function analyzeEntry(journalId) {
-  entryInsightErrors.value = {
-    ...entryInsightErrors.value,
-    [journalId]: ""
-  };
 
   const res = await fetch(`${baseUrl}/insights/journal/${journalId}`, {
     method: "POST"
@@ -356,17 +439,26 @@ async function submit() {
       return;
     }
 
-    try {
-      await analyzeEntry(journalId);
-      flash("SUBMITTED + ANALYZED");
-    } catch {
-      flash("SUBMITTED; ANALYSIS FAILED");
-    }
+    await loadEntryInsights(journalId);
+
+    expandedInsights.value = {
+      ...expandedInsights.value,
+      [journalId]: true
+    };
+
+    flash("SUBMITTED + INSIGHT READY");
   } catch (e) {
     flash(`ERROR: ${e.message}`);
   } finally {
     isSubmitting.value = false;
   }
+}
+
+function formatMood(value) {
+  if (value == null || value === "") return "—";
+  const num = Number(value);
+  if (Number.isNaN(num)) return value;
+  return num > 0 ? `+${num}` : `${num}`;
 }
 </script>
 
@@ -574,19 +666,75 @@ async function submit() {
 
 .insight-box {
   margin-top: 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line2);
   border-radius: 10px;
-  padding: 12px;
-  background: rgba(255, 255, 255, 0.04);
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.insight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 180px));
+  gap: 10px;
+  margin-bottom: 14px;
 }
 
 .insight-header {
   display: flex;
-  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 10px;
   flex-wrap: wrap;
+  margin-bottom: 14px;
+  color: var(--muted);
+  font-size: 14px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.insight-stat {
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.insight-stat-label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.insight-stat-value {
+  display: block;
+  font-size: 18px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.insight-section + .insight-section {
+  margin-top: 14px;
+}
+
+.insight-section-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.insight-paragraph {
+  margin: 0;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.insight-list {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.5;
 }
 
 .insight-label,

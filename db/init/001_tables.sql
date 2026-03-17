@@ -217,3 +217,106 @@ CREATE TABLE IF NOT EXISTS journal_analysis (
     summary TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS journal_entry_analysis (
+    id BIGSERIAL PRIMARY KEY,
+    journal_entry_id BIGINT NOT NULL UNIQUE REFERENCES journal(id) ON DELETE CASCADE,
+
+    model_provider TEXT NOT NULL DEFAULT 'anthropic',
+    model_name TEXT NOT NULL DEFAULT 'claude-haiku-4-5',
+    prompt_version TEXT NOT NULL DEFAULT 'v2',
+
+    mood_score NUMERIC(4,2),
+    emotional_tone TEXT,
+
+    key_emotions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    stressors JSONB NOT NULL DEFAULT '[]'::jsonb,
+    positive_signals JSONB NOT NULL DEFAULT '[]'::jsonb,
+    thinking_patterns JSONB NOT NULL DEFAULT '[]'::jsonb,
+    life_direction_signals JSONB NOT NULL DEFAULT '[]'::jsonb,
+    reflection_questions JSONB NOT NULL DEFAULT '[]'::jsonb,
+
+    insight TEXT,
+    encouragement TEXT,
+    raw_output JSONB,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_journal_entry_analysis_journal_entry_id
+    ON journal_entry_analysis (journal_entry_id);
+
+CREATE INDEX IF NOT EXISTS idx_journal_entry_analysis_mood_score
+    ON journal_entry_analysis (mood_score);
+
+CREATE INDEX IF NOT EXISTS idx_journal_entry_analysis_key_emotions_gin
+    ON journal_entry_analysis USING GIN (key_emotions);
+
+CREATE INDEX IF NOT EXISTS idx_journal_entry_analysis_stressors_gin
+    ON journal_entry_analysis USING GIN (stressors);
+
+CREATE INDEX IF NOT EXISTS idx_journal_entry_analysis_positive_signals_gin
+    ON journal_entry_analysis USING GIN (positive_signals);
+
+CREATE INDEX IF NOT EXISTS idx_journal_entry_analysis_thinking_patterns_gin
+    ON journal_entry_analysis USING GIN (thinking_patterns);
+
+CREATE INDEX IF NOT EXISTS idx_journal_entry_analysis_life_direction_signals_gin
+    ON journal_entry_analysis USING GIN (life_direction_signals);
+
+
+CREATE TABLE IF NOT EXISTS journal_pattern_profile (
+    id BIGSERIAL PRIMARY KEY,
+
+    period_type TEXT NOT NULL CHECK (
+        period_type IN ('weekly', 'monthly', 'yearly', 'rolling_10_entries', 'custom')
+    ),
+    period_start DATE NOT NULL,
+    period_end DATE NOT NULL,
+    entry_count INTEGER NOT NULL DEFAULT 0,
+
+    model_provider TEXT NOT NULL DEFAULT 'anthropic',
+    model_name TEXT NOT NULL DEFAULT 'claude-haiku-4-5',
+    prompt_version TEXT NOT NULL DEFAULT 'v2',
+
+    average_mood_score NUMERIC(4,2),
+
+    dominant_emotions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    recurring_stressors JSONB NOT NULL DEFAULT '[]'::jsonb,
+    recurring_positive_signals JSONB NOT NULL DEFAULT '[]'::jsonb,
+    recurring_thinking_patterns JSONB NOT NULL DEFAULT '[]'::jsonb,
+    recurring_life_direction_signals JSONB NOT NULL DEFAULT '[]'::jsonb,
+    core_values JSONB NOT NULL DEFAULT '[]'::jsonb,
+    motivation_drivers JSONB NOT NULL DEFAULT '[]'::jsonb,
+    growth_signals JSONB NOT NULL DEFAULT '[]'::jsonb,
+    risk_signals JSONB NOT NULL DEFAULT '[]'::jsonb,
+
+    pattern_summary TEXT,
+    raw_output JSONB,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_journal_pattern_profile_period
+    ON journal_pattern_profile (period_type, period_start, period_end);
+
+CREATE INDEX IF NOT EXISTS idx_journal_pattern_profile_dominant_emotions_gin
+    ON journal_pattern_profile USING GIN (dominant_emotions);
+
+CREATE INDEX IF NOT EXISTS idx_journal_pattern_profile_recurring_stressors_gin
+    ON journal_pattern_profile USING GIN (recurring_stressors);
+
+CREATE INDEX IF NOT EXISTS idx_journal_pattern_profile_recurring_positive_signals_gin
+    ON journal_pattern_profile USING GIN (recurring_positive_signals);
+
+CREATE INDEX IF NOT EXISTS idx_journal_pattern_profile_recurring_thinking_patterns_gin
+    ON journal_pattern_profile USING GIN (recurring_thinking_patterns);
+
+CREATE INDEX IF NOT EXISTS idx_journal_pattern_profile_recurring_life_direction_signals_gin
+    ON journal_pattern_profile USING GIN (recurring_life_direction_signals);
+
+CREATE INDEX IF NOT EXISTS idx_journal_pattern_profile_core_values_gin
+    ON journal_pattern_profile USING GIN (core_values);
+
+CREATE INDEX IF NOT EXISTS idx_journal_pattern_profile_motivation_drivers_gin
+    ON journal_pattern_profile USING GIN (motivation_drivers);

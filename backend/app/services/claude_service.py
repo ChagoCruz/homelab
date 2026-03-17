@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from typing import Any
+import json
 import os
 
 from anthropic import Anthropic
@@ -31,7 +34,7 @@ def _truncate_text(text: str, max_chars: int = 2500) -> str:
     return text[:max_chars] + "\n\n[Truncated for analysis]"
 
 
-def _message(system_prompt: str, user_prompt: str, max_tokens: int = 500) -> str:
+def _message(system_prompt: str, user_prompt: str, max_tokens: int = 900) -> str:
     try:
         response = _get_client().messages.create(
             model=ANTHROPIC_MODEL,
@@ -45,86 +48,226 @@ def _message(system_prompt: str, user_prompt: str, max_tokens: int = 500) -> str
             ],
         )
 
-        parts = []
+        parts: list[str] = []
         for block in response.content:
             if getattr(block, "type", None) == "text":
                 parts.append(block.text)
 
         text = "\n".join(parts).strip()
-
         if not text:
             raise HTTPException(status_code=502, detail="Claude returned an empty response.")
-
         return text
-
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Claude request failed: {e}")
 
 
-def generate_journal_entry_analysis(entry: dict[str, Any]) -> str:
+def _extract_json(text: str) -> dict[str, Any]:
+    """
+    Attempts to parse a JSON object from the model output.
+    """
+    text = text.strip()
+
+    # direct parse
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            return data
+    except json.JSONDecodeError:
+        pass
+
+    # fallback: find first {...} block
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = text[start : end + 1]
+        try:
+            data = json.loads(candidate)
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError:
+            pass
+
+    raise HTTPException(
+        status_code=502,
+        detail="Claude returned invalid JSON for structured journal analysis.",
+    )
+
+
+ENTRY_ANALYSIS_SYSTEM_PROMPT = """
+You are a reflective personal therapist and life analyst.
+
+Your role is not to judge or diagnose, but to help the user understand patterns
+in their thoughts, emotions, and behaviors.
+
+Analyze the following journal entry.
+
+Focus on identifying:
+
+Emotional signals
+- emotional tone
+- key emotions
+- possible underlying feelings
+
+Positive signals
+- positive moments
+- motivation
+- creative excitement
+- progress or growth
+
+Stress signals
+- possible stressors
+- burnout signals
+- self doubt
+- perfectionism
+- frustration
+
+Behavioral patterns
+- recurring motivations
+- repeated concerns
+- thinking patterns
+- motivation cycles
+
+Life direction signals
+- career interests
+- creative interests
+- personal values
+- long-term motivations
+
+Also generate:
+- a mood score from -5 to 5
+- three thoughtful reflection questions that help the user explore their thoughts more deeply
+- a short therapist-style insight (maximum 2 sentences)
+- gentle encouragement or perspective (not prescriptive advice)
+
+Return ONLY valid JSON with the following structure:
+
+{
+  "mood_score": 0,
+  "emotional_tone": "",
+  "key_emotions": [],
+  "stressors": [],
+  "positive_signals": [],
+  "thinking_patterns": [],
+  "life_direction_signals": [],
+  "insight": "",
+  "reflection_questions": [],
+  "encouragement": ""
+}
+
+If information is not present in the journal entry, return an empty array or empty string rather than guessing.
+""".strip()
+
+
+LONG_TERM_PROFILE_SYSTEM_PROMPT = """
+You are a reflective personal therapist and long-term life pattern analyst.
+
+Your role is not to judge or diagnose, but to identify recurring emotional,
+behavioral, motivational, and value-based patterns over time.
+
+You are analyzing multiple journal entry analyses from the same person across a period of time.
+
+Your goal is to identify stable and recurring patterns, not isolated one-time reactions.
+
+Focus on identifying:
+
+Emotional trends
+- dominant emotional tones
+- repeated emotional states
+- average mood pattern over time
+
+Recurring stress patterns
+- repeated stressors
+- burnout signals
+- sources of frustration or emotional drain
+
+Recurring positive patterns
+- moments of motivation
+- sources of energy
+- activities or thoughts associated with improved mood
+
+Thinking and behavior patterns
+- self doubt
+- perfectionism
+- motivation cycles
+- avoidance patterns
+- persistence
+- creative excitement
+- emotional recovery patterns
+
+Life direction signals
+- recurring career interests
+- recurring creative interests
+- long-term motivations
+- personal values
+- themes that appear meaningful over time
+
+Growth and risk signals
+- signs of progress
+- signs of resilience
+- signs of increased clarity
+- possible recurring negative loops
+- possible pressure points that may deserve reflection
+
+Generate a grounded long-term pattern model based only on the information provided.
+
+Return ONLY valid JSON with the following structure:
+
+{
+  "average_mood_score": 0,
+  "dominant_emotions": [],
+  "recurring_stressors": [],
+  "recurring_positive_signals": [],
+  "recurring_thinking_patterns": [],
+  "recurring_life_direction_signals": [],
+  "core_values": [],
+  "motivation_drivers": [],
+  "growth_signals": [],
+  "risk_signals": [],
+  "pattern_summary": ""
+}
+
+Rules:
+- Base conclusions only on repeated or supported patterns across entries.
+- Do not diagnose mental health conditions or assign fixed personality labels.
+- Do not overstate certainty.
+- If a pattern is weak or unclear, omit it or return an empty array.
+- If information is not present in the journal analyses, return an empty array or empty string rather than guessing.
+""".strip()
+
+
+def analyze_journal_entry_structured(entry: dict[str, Any]) -> dict[str, Any]:
     content = _truncate_text(entry.get("content", ""), max_chars=2500)
 
-    system_prompt = (
-        "You are a reflective journaling assistant for a personal analytics app. "
-        "Do not diagnose mental health conditions. "
-        "Do not sound like a therapist. "
-        "Identify themes, emotional tone, possible stressors, positive signals, and one reflection question. "
-        "Be grounded, concise, and specific to the text. "
-        "Keep the total response under 250 words. "
-        "Return markdown with these exact headings: "
-        "Summary, Themes, Emotional tone, Possible stressors, Positive signals, Reflection question."
-    )
-
     user_prompt = (
-        "Analyze this single journal entry.\n\n"
+        "Journal entry:\n"
         f"Entry date: {entry['entry_date']}\n"
-        f"Word count: {entry['word_count']}\n\n"
-        f"Content:\n{content}"
+        f"Content:\n{content}\n"
     )
 
-    return _message(system_prompt, user_prompt, max_tokens=500)
-
-
-def generate_journal_period_summary(entries: list[dict[str, Any]]) -> str:
-    serialized_entries = []
-
-    for entry in entries:
-        serialized_entries.append(
-            {
-                "journal_id": entry["journal_id"],
-                "entry_date": str(entry["entry_date"]),
-                "word_count": entry["word_count"],
-                "content": _truncate_text(entry.get("content", ""), max_chars=1800),
-            }
-        )
-
-    system_prompt = (
-        "You are a reflective journaling assistant for a personal analytics app. "
-        "Do not diagnose or moralize. "
-        "Summarize recurring themes across multiple journal entries. "
-        "Highlight repeated concerns, positive momentum, shifts in tone, and one useful reflection question. "
-        "Keep the response under 300 words. "
-        "Return markdown with these exact headings: "
-        "Weekly summary, Recurring themes, Tone shifts, Positive momentum, Reflection question."
+    raw = _message(
+        system_prompt=ENTRY_ANALYSIS_SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+        max_tokens=900,
     )
+    return _extract_json(raw)
 
-    user_prompt = (
-        "Analyze these journal entries from one period.\n\n"
-        f"{serialized_entries}"
+
+def build_journal_pattern_profile(
+    analyses: list[dict[str, Any]],
+    period_type: str,
+    period_start: str,
+    period_end: str,
+) -> dict[str, Any]:
+    serialized = {
+        "period_type": period_type,
+        "period_start": period_start,
+        "period_end": period_end,
+        "analyses": analyses,
+    }
+
+    raw = _message(
+        system_prompt=LONG_TERM_PROFILE_SYSTEM_PROMPT,
+        user_prompt=f"Journal entry analyses:\n{json.dumps(serialized, default=str)}",
+        max_tokens=1100,
     )
-
-    return _message(system_prompt, user_prompt, max_tokens=650)
-
-
-def generate_weekly_health_insight(metrics: dict[str, Any]) -> str:
-    system_prompt = (
-        "You are a careful health analytics assistant. "
-        "Summarize structured health data clearly and cautiously. "
-        "Do not diagnose or give medical advice. "
-        "Use language like 'associated with', 'tends to', or 'may indicate'. "
-        "Return a short report with a summary paragraph, three bullet observations, and one gentle suggestion."
-    )
-
-    user_prompt = f"Weekly health metrics:\n{metrics}"
-
-    return _message(system_prompt, user_prompt, max_tokens=500)
+    return _extract_json(raw)
