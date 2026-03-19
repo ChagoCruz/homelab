@@ -17,6 +17,8 @@ allow_origins = [o.strip() for o in raw_origins.split(",") if o.strip()] or [
 app.add_middleware(
   CORSMiddleware,
   allow_origins=allow_origins,
+  # Allow local dev origins even when Vite moves ports (e.g. 5174).
+  allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
   allow_credentials=True,
   allow_methods=["*"],
   allow_headers=["*"],

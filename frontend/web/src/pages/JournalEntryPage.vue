@@ -207,7 +207,30 @@ const entryInsights = ref({});
 const entryInsightErrors = ref({});
 const expandedInsights = ref({});
 
-const baseUrl = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const configuredApiUrl = import.meta.env.VITE_API_URL;
+const browserLocation = typeof window !== "undefined" ? window.location : null;
+const browserHost = browserLocation?.hostname;
+const browserOrigin = browserLocation?.origin;
+const hostBasedCandidates = browserHost
+  ? [
+      `http://${browserHost}:8001`,
+      `http://${browserHost}:8000`,
+      `https://${browserHost}:8001`,
+      `https://${browserHost}:8000`
+    ]
+  : [];
+const apiBaseCandidates = [...new Set(
+  [
+    configuredApiUrl,
+    browserOrigin,
+    ...hostBasedCandidates,
+    "http://localhost:8001",
+    "http://127.0.0.1:8001",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000"
+  ].filter(Boolean)
+)];
+const activeApiBaseUrl = ref(apiBaseCandidates[0] ?? "http://localhost:8000");
 
 const today = new Date();
 const displayDate = computed(() =>
@@ -233,6 +256,36 @@ function flash(msg) {
   status.value = msg;
   window.clearTimeout(flash._t);
   flash._t = window.setTimeout(() => (status.value = ""), 2200);
+}
+
+function isNetworkFetchError(error) {
+  return error instanceof TypeError && /Failed to fetch/i.test(error.message || "");
+}
+
+function withApiHint(error) {
+  if (isNetworkFetchError(error)) {
+    const tried = apiBaseCandidates.join(", ");
+    const hostHint = browserHost ? ` Browser host: ${browserHost}.` : "";
+    return `Failed to reach API. Tried: ${tried}.${hostHint}`;
+  }
+  return error?.message || "Unknown error";
+}
+
+async function apiFetch(path, init) {
+  let lastError = null;
+
+  for (const base of apiBaseCandidates) {
+    try {
+      const res = await fetch(`${base}${path}`, init);
+      activeApiBaseUrl.value = base;
+      return res;
+    } catch (error) {
+      lastError = error;
+      if (!isNetworkFetchError(error)) throw error;
+    }
+  }
+
+  throw lastError || new Error("Failed to fetch");
 }
 
 function saveLocal() {
@@ -316,7 +369,7 @@ function isInsightOpen(id) {
 
 async function loadEntryInsights(journalId) {
   try {
-    const res = await fetch(`${baseUrl}/journal/${journalId}/analysis`);
+    const res = await apiFetch(`/journal/${journalId}/analysis`);
 
     if (res.status === 404) {
       entryInsights.value = {
@@ -350,7 +403,7 @@ async function loadEntryInsights(journalId) {
   } catch (e) {
     entryInsightErrors.value = {
       ...entryInsightErrors.value,
-      [journalId]: `Unable to load insight: ${e.message}`
+      [journalId]: `Unable to load insight: ${withApiHint(e)}`
     };
   }
 }
@@ -363,7 +416,7 @@ async function loadEntries(force = false) {
   historyError.value = "";
 
   try {
-    const res = await fetch(`${baseUrl}/journal/`);
+    const res = await apiFetch("/journal/");
     if (!res.ok) {
       const msg = await res.text().catch(() => "");
       throw new Error(msg || `HTTP ${res.status}`);
@@ -375,31 +428,10 @@ async function loadEntries(force = false) {
 
     await Promise.all(entries.value.map((entry) => loadEntryInsights(entry.id)));
   } catch (e) {
-    historyError.value = `Unable to load entries: ${e.message}`;
+    historyError.value = `Unable to load entries: ${withApiHint(e)}`;
   } finally {
     isLoadingEntries.value = false;
   }
-
-  const res = await fetch(`${baseUrl}/insights/journal/${journalId}`, {
-    method: "POST"
-  });
-
-  if (!res.ok) {
-    const msg = await res.text().catch(() => "");
-    const error = new Error(msg || `HTTP ${res.status}`);
-    entryInsightErrors.value = {
-      ...entryInsightErrors.value,
-      [journalId]: `Unable to analyze entry: ${error.message}`
-    };
-    throw error;
-  }
-
-  await loadEntryInsights(journalId);
-
-  expandedInsights.value = {
-    ...expandedInsights.value,
-    [journalId]: true
-  };
 }
 
 async function submit() {
@@ -412,7 +444,7 @@ async function submit() {
       content: text.value
     };
 
-    const res = await fetch(`${baseUrl}/journal/`, {
+    const res = await apiFetch("/journal/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -446,9 +478,13 @@ async function submit() {
       [journalId]: true
     };
 
-    flash("SUBMITTED + INSIGHT READY");
+    flash(
+      activeApiBaseUrl.value
+        ? `SUBMITTED + INSIGHT READY (${activeApiBaseUrl.value})`
+        : "SUBMITTED + INSIGHT READY"
+    );
   } catch (e) {
-    flash(`ERROR: ${e.message}`);
+    flash(`ERROR: ${withApiHint(e)}`);
   } finally {
     isSubmitting.value = false;
   }

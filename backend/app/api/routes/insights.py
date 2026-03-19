@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.db.models import JournalEntryAnalysis, JournalPatternProfile
+from app.db.models import Journal, JournalEntryAnalysis, JournalPatternProfile
 from app.schemas.journal_ai import JournalPatternProfileOut
 from app.services.claude_service import build_journal_pattern_profile
 from app.services.ollama_service import generate_weekly_report
@@ -129,16 +129,34 @@ def create_weekly_journal_profile(db: Session = Depends(get_db)):
     period_end = date.today()
     period_start = period_end - timedelta(days=6)
 
-    rows = (
-        db.query(JournalEntryAnalysis)
-        .join(text("journal_entry_analysis.journal_entry_id = journal.id"))
-        .filter(text("journal.entry_date BETWEEN :start AND :end"))
-        .params(start=period_start, end=period_end)
-        .all()
-    )
+    def load_rows(window_start: date, window_end: date):
+        return (
+            db.query(JournalEntryAnalysis)
+            .join(Journal, JournalEntryAnalysis.journal_entry_id == Journal.id)
+            .filter(Journal.entry_date >= window_start, Journal.entry_date <= window_end)
+            .all()
+        )
+
+    rows = load_rows(period_start, period_end)
 
     if not rows:
-        raise HTTPException(status_code=404, detail="No journal analyses found for this period.")
+        latest_entry_date = (
+            db.query(Journal.entry_date)
+            .join(JournalEntryAnalysis, JournalEntryAnalysis.journal_entry_id == Journal.id)
+            .order_by(Journal.entry_date.desc(), Journal.id.desc())
+            .limit(1)
+            .scalar()
+        )
+
+        if latest_entry_date is None:
+            raise HTTPException(status_code=404, detail="No analyzed journal entries exist yet.")
+
+        period_end = latest_entry_date
+        period_start = period_end - timedelta(days=6)
+        rows = load_rows(period_start, period_end)
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No journal analyses found for any 7-day period.")
 
     analyses = []
     mood_scores = []
