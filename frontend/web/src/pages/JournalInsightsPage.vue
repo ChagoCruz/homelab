@@ -20,6 +20,7 @@
       <div class="meta-row">
         <span v-if="status" class="status">{{ status }}</span>
         <span v-if="isLoadingProfiles">LOADING PROFILES...</span>
+        <span v-if="isLoadingWeeklySummaries">LOADING SUMMARIES...</span>
         <span v-if="isLoadingDailyInsights">LOADING DAILY INSIGHTS...</span>
       </div>
 
@@ -28,140 +29,76 @@
 
       <button class="accordion-toggle top-level" type="button" @click="toggleWeeklyRoot">
         <span class="summary-arrow" :class="{ open: weeklyRootOpen }">▶</span>
-        <span>WEEKLY PROFILES</span>
-        <span class="section-count">{{ profiles.length }}</span>
+        <span>WEEKLY</span>
+        <span class="section-count">{{ weeklyStacks.length }}</span>
       </button>
 
       <transition name="expand">
         <div v-if="weeklyRootOpen" class="accordion-body">
-          <p v-if="!isLoadingProfiles && sortedProfiles.length === 0" class="empty-text">
+          <p v-if="!isLoadingProfiles && !isLoadingWeeklySummaries && weeklyStacks.length === 0" class="empty-text">
             No weekly profiles yet.
           </p>
 
           <div v-else class="accordion-tree">
             <article
-              v-for="profile in sortedProfiles"
-              :key="profile.id"
+              v-for="week in weeklyStacks"
+              :key="week.key"
               class="profile-card"
             >
               <button
                 class="accordion-toggle profile-toggle"
                 type="button"
-                @click="toggleProfile(profile.id)"
+                @click="toggleProfile(week.key)"
               >
                 <span
                   class="summary-arrow"
-                  :class="{ open: isProfileOpen(profile.id) }"
+                  :class="{ open: isProfileOpen(week.key) }"
                 >
                   ▶
                 </span>
                 <span>
-                  {{ formatRange(profile.period_start, profile.period_end) }}
+                  {{ formatRange(week.period_start, week.period_end) }}
                 </span>
                 <span class="section-count">
-                  {{ profile.entry_count ?? 0 }} ENTRIES
+                  {{ weeklyStackBadge(week) }}
                 </span>
               </button>
 
               <transition name="expand">
-                <div v-if="isProfileOpen(profile.id)" class="profile-body">
-                  <div class="profile-stats">
-                    <div class="profile-stat">
-                      <span class="profile-stat-label">AVG MOOD</span>
-                      <span class="profile-stat-value">
-                        {{ formatMood(profile.average_mood_score) }}
-                      </span>
-                    </div>
-
-                    <div class="profile-stat">
-                      <span class="profile-stat-label">PERIOD</span>
-                      <span class="profile-stat-value">
-                        {{ profile.period_start }} → {{ profile.period_end }}
-                      </span>
-                    </div>
-                  </div>
-
-                  <section v-if="profile.pattern_summary" class="profile-section">
-                    <h3 class="profile-section-title">SUMMARY</h3>
-                    <p class="profile-paragraph">{{ profile.pattern_summary }}</p>
+                <div v-if="isProfileOpen(week.key)" class="profile-body">
+                  <section v-if="week.summary" class="profile-section">
+                    <h3 class="stack-block-title">[ SUMMARY ]</h3>
+                    <p class="profile-paragraph">{{ weeklySummaryText(week) }}</p>
                   </section>
 
                   <section
-                    v-if="profile.dominant_emotions?.length"
+                    v-if="weeklySummaryThemes(week).length"
                     class="profile-section"
                   >
-                    <h3 class="profile-section-title">DOMINANT EMOTIONS</h3>
+                    <h3 class="stack-block-title">[ THEMES ]</h3>
                     <ul class="profile-list">
-                      <li v-for="(item, idx) in profile.dominant_emotions" :key="idx">
+                      <li v-for="(item, idx) in weeklySummaryThemes(week)" :key="idx">
                         {{ item }}
                       </li>
                     </ul>
                   </section>
 
-                  <section
-                    v-if="profile.recurring_stressors?.length"
-                    class="profile-section"
-                  >
-                    <h3 class="profile-section-title">RECURRING STRESSORS</h3>
-                    <ul class="profile-list">
-                      <li v-for="(item, idx) in profile.recurring_stressors" :key="idx">
-                        {{ item }}
-                      </li>
-                    </ul>
-                  </section>
+                  <div v-if="week.summary && week.profile" class="stack-divider"></div>
 
-                  <section
-                    v-if="profile.recurring_positive_signals?.length"
-                    class="profile-section"
-                  >
-                    <h3 class="profile-section-title">POSITIVE SIGNALS</h3>
-                    <ul class="profile-list">
-                      <li
-                        v-for="(item, idx) in profile.recurring_positive_signals"
-                        :key="idx"
-                      >
-                        {{ item }}
-                      </li>
-                    </ul>
-                  </section>
-
-                  <section
-                    v-if="profile.recurring_thinking_patterns?.length"
-                    class="profile-section"
-                  >
-                    <h3 class="profile-section-title">THINKING PATTERNS</h3>
-                    <ul class="profile-list">
-                      <li
-                        v-for="(item, idx) in profile.recurring_thinking_patterns"
-                        :key="idx"
-                      >
-                        {{ item }}
-                      </li>
-                    </ul>
-                  </section>
-
-                  <section
-                    v-if="profile.recurring_life_direction_signals?.length"
-                    class="profile-section"
-                  >
-                    <h3 class="profile-section-title">LIFE DIRECTION</h3>
-                    <ul class="profile-list">
-                      <li
-                        v-for="(item, idx) in profile.recurring_life_direction_signals"
-                        :key="idx"
-                      >
-                        {{ item }}
-                      </li>
-                    </ul>
-                  </section>
-
-                  <section v-if="profile.core_values?.length" class="profile-section">
-                    <h3 class="profile-section-title">CORE VALUES</h3>
-                    <ul class="profile-list">
-                      <li v-for="(item, idx) in profile.core_values" :key="idx">
-                        {{ item }}
-                      </li>
-                    </ul>
+                  <section v-if="week.profile" class="profile-section">
+                    <h3 class="stack-block-title">[ PATTERN ANALYSIS ]</h3>
+                    <p class="stack-kv" v-if="week.profile.dominant_emotions?.length">
+                      dominant_emotions: {{ joinList(week.profile.dominant_emotions) }}
+                    </p>
+                    <p class="stack-kv" v-if="week.profile.recurring_stressors?.length">
+                      stressors: {{ joinList(week.profile.recurring_stressors) }}
+                    </p>
+                    <p class="stack-kv" v-if="week.profile.motivation_drivers?.length">
+                      motivation_drivers: {{ joinList(week.profile.motivation_drivers) }}
+                    </p>
+                    <p class="stack-quote" v-if="week.profile.pattern_summary">
+                      > {{ week.profile.pattern_summary }}
+                    </p>
                   </section>
                 </div>
               </transition>
@@ -334,8 +271,10 @@ const apiBaseCandidates = [...new Set(
 const activeApiBaseUrl = ref(apiBaseCandidates[0] ?? "http://localhost:8000");
 
 const profiles = ref([]);
+const weeklySummaries = ref([]);
 const dailyInsights = ref([]);
 const isLoadingProfiles = ref(false);
+const isLoadingWeeklySummaries = ref(false);
 const isLoadingDailyInsights = ref(false);
 const isGeneratingWeekly = ref(false);
 const status = ref("");
@@ -495,13 +434,107 @@ function formatRange(start, end) {
   return `${fmt(startDate)} – ${fmt(endDate)}`;
 }
 
-const sortedProfiles = computed(() =>
-  [...profiles.value].sort((a, b) => {
-    const byStart = String(b.period_start ?? "").localeCompare(String(a.period_start ?? ""));
+function parseStructuredOutput(value) {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  if (typeof value !== "string") return {};
+
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function joinList(items) {
+  if (!Array.isArray(items)) return "";
+  return items.filter(Boolean).join(", ");
+}
+
+function weeklySummaryText(week) {
+  if (!week?.summary) return "";
+  const structured = parseStructuredOutput(week.summary.structured_output);
+  return structured.summary || week.summary.insight_text || "";
+}
+
+function weeklySummaryThemes(week) {
+  if (!week?.summary) return [];
+  const structured = parseStructuredOutput(week.summary.structured_output);
+  return Array.isArray(structured.themes) ? structured.themes : [];
+}
+
+function weeklyStackBadge(week) {
+  const hasSummary = !!week?.summary;
+  const hasProfile = !!week?.profile;
+
+  if (hasSummary && hasProfile) {
+    const count = week.profile?.entry_count ?? 0;
+    return `${count} ENTRIES`;
+  }
+
+  if (hasProfile) {
+    const count = week.profile?.entry_count ?? 0;
+    return `${count} ENTRIES`;
+  }
+
+  if (hasSummary) return "SUMMARY";
+  return "";
+}
+
+const weeklyStacks = computed(() => {
+  const byPeriod = new Map();
+
+  const ensureWeek = (periodStart, periodEnd) => {
+    const key = `${periodStart}|${periodEnd}`;
+    if (!byPeriod.has(key)) {
+      byPeriod.set(key, {
+        key,
+        period_start: periodStart,
+        period_end: periodEnd,
+        summary: null,
+        profile: null
+      });
+    }
+    return byPeriod.get(key);
+  };
+
+  for (const profile of profiles.value) {
+    const periodStart = String(profile?.period_start ?? "");
+    const periodEnd = String(profile?.period_end ?? "");
+    if (!periodStart || !periodEnd) continue;
+
+    const week = ensureWeek(periodStart, periodEnd);
+
+    if (
+      !week.profile ||
+      entryTimestamp(profile?.created_at) > entryTimestamp(week.profile?.created_at)
+    ) {
+      week.profile = profile;
+    }
+  }
+
+  for (const summary of weeklySummaries.value) {
+    const periodStart = String(summary?.period_start ?? "");
+    const periodEnd = String(summary?.period_end ?? "");
+    if (!periodStart || !periodEnd) continue;
+
+    const week = ensureWeek(periodStart, periodEnd);
+
+    if (
+      !week.summary ||
+      entryTimestamp(summary?.created_at) > entryTimestamp(week.summary?.created_at)
+    ) {
+      week.summary = summary;
+    }
+  }
+
+  return [...byPeriod.values()].sort((a, b) => {
+    const byStart = String(b.period_start).localeCompare(String(a.period_start));
     if (byStart !== 0) return byStart;
-    return (b.id ?? 0) - (a.id ?? 0);
-  })
-);
+    return String(b.period_end).localeCompare(String(a.period_end));
+  });
+});
 
 const groupedDailyInsights = computed(() => {
   const dayMap = new Map();
@@ -552,6 +585,31 @@ async function loadProfiles() {
     weeklyError.value = `Unable to load journal profiles: ${withApiHint(e)}`;
   } finally {
     isLoadingProfiles.value = false;
+  }
+}
+
+async function loadWeeklySummaries() {
+  isLoadingWeeklySummaries.value = true;
+
+  try {
+    const res = await apiFetch("/insights/journal/weekly-summary");
+
+    if (res.status === 404) {
+      weeklySummaries.value = [];
+      return;
+    }
+
+    if (!res.ok) {
+      const msg = await readApiError(res);
+      throw new Error(msg);
+    }
+
+    const data = await res.json();
+    weeklySummaries.value = Array.isArray(data) ? data : [];
+  } catch (e) {
+    weeklyError.value = `Unable to load weekly summaries: ${withApiHint(e)}`;
+  } finally {
+    isLoadingWeeklySummaries.value = false;
   }
 }
 
@@ -607,21 +665,30 @@ async function generateWeekly() {
   weeklyError.value = "";
 
   try {
-    const res = await apiFetch("/insights/journal/weekly", {
+    const summaryRes = await apiFetch("/insights/journal/weekly-summary", {
       method: "POST"
     });
 
-    if (!res.ok) {
-      const msg = await readApiError(res);
+    if (!summaryRes.ok) {
+      const msg = await readApiError(summaryRes);
       throw new Error(msg);
     }
 
-    await res.json();
-    await loadProfiles();
+    const profileRes = await apiFetch("/insights/journal/weekly", {
+      method: "POST"
+    });
+
+    if (!profileRes.ok) {
+      const msg = await readApiError(profileRes);
+      throw new Error(msg);
+    }
+
+    await Promise.all([summaryRes.json(), profileRes.json()]);
+    await Promise.all([loadProfiles(), loadWeeklySummaries()]);
     flash(
       activeApiBaseUrl.value
-        ? `WEEKLY PROFILE CREATED (${activeApiBaseUrl.value})`
-        : "WEEKLY PROFILE CREATED"
+        ? `WEEKLY SUMMARY + PROFILE CREATED (${activeApiBaseUrl.value})`
+        : "WEEKLY SUMMARY + PROFILE CREATED"
     );
   } catch (e) {
     weeklyError.value = `Unable to generate weekly profile: ${withApiHint(e)}`;
@@ -632,7 +699,7 @@ async function generateWeekly() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadProfiles(), loadDailyInsights()]);
+  await Promise.all([loadProfiles(), loadWeeklySummaries(), loadDailyInsights()]);
 });
 </script>
 
@@ -833,8 +900,37 @@ onMounted(async () => {
   text-transform: uppercase;
 }
 
+.stack-block-title {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
 .profile-paragraph {
   margin: 0;
+  line-height: 1.5;
+}
+
+.stack-divider {
+  border-top: 1px dashed var(--line2);
+  margin: 14px 0;
+}
+
+.stack-kv {
+  margin: 0;
+  line-height: 1.5;
+  text-transform: none;
+}
+
+.stack-kv + .stack-kv {
+  margin-top: 6px;
+}
+
+.stack-quote {
+  margin: 12px 0 0;
+  color: var(--muted);
   line-height: 1.5;
 }
 

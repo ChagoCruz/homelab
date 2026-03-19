@@ -10,11 +10,54 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.db.models import Journal, JournalEntryAnalysis, JournalPatternProfile
 from app.schemas.journal_ai import JournalPatternProfileOut
-from app.services.claude_service import build_journal_pattern_profile
+from app.services.claude_service import (
+    build_journal_pattern_profile,
+    build_journal_period_summary,
+)
 from app.services.ollama_service import generate_weekly_report
 
 router = APIRouter(prefix="/insights", tags=["insights"])
 
+def _load_weekly_analysis_rows(db: Session, period_start: date, period_end: date):
+    return (
+        db.query(JournalEntryAnalysis, Journal)
+        .join(Journal, JournalEntryAnalysis.journal_entry_id == Journal.id)
+        .filter(Journal.entry_date >= period_start, Journal.entry_date <= period_end)
+        .order_by(Journal.entry_date.asc(), Journal.id.asc())
+        .all()
+    )
+
+def _serialize_weekly_analyses(rows):
+    analyses = []
+    journal_ids = []
+    mood_scores = []
+
+    for analysis, journal in rows:
+        journal_ids.append(journal.id)
+
+        mood_value = float(analysis.mood_score) if analysis.mood_score is not None else None
+        if mood_value is not None:
+            mood_scores.append(mood_value)
+
+        analyses.append(
+            {
+                "journal_entry_id": analysis.journal_entry_id,
+                "entry_date": str(journal.entry_date),
+                "mood_score": mood_value,
+                "emotional_tone": analysis.emotional_tone,
+                "key_emotions": analysis.key_emotions or [],
+                "stressors": analysis.stressors or [],
+                "positive_signals": analysis.positive_signals or [],
+                "thinking_patterns": analysis.thinking_patterns or [],
+                "life_direction_signals": analysis.life_direction_signals or [],
+                "insight": analysis.insight,
+                "reflection_questions": analysis.reflection_questions or [],
+                "encouragement": analysis.encouragement,
+            }
+        )
+
+    avg_mood = round(sum(mood_scores) / len(mood_scores), 2) if mood_scores else None
+    return analyses, journal_ids, avg_mood
 
 @router.post("/weekly")
 def create_weekly_insight(db: Session = Depends(get_db)):
@@ -258,6 +301,141 @@ def create_weekly_journal_profile(db: Session = Depends(get_db)):
     db.commit()
     db.refresh(profile)
     return profile
+
+@router.post("/journal/weekly-summary")
+def create_weekly_journal_summary(db: Session = Depends(get_db)):
+    period_end = date.today()
+    period_start = period_end - timedelta(days=6)
+
+    rows = _load_weekly_analysis_rows(db, period_start, period_end)
+
+    if not rows:
+        latest_entry_date = (
+            db.query(Journal.entry_date)
+            .join(JournalEntryAnalysis, JournalEntryAnalysis.journal_entry_id == Journal.id)
+            .order_by(Journal.entry_date.desc(), Journal.id.desc())
+            .limit(1)
+            .scalar()
+        )
+
+        if latest_entry_date is None:
+            raise HTTPException(status_code=404, detail="No analyzed journal entries exist yet.")
+
+        period_end = latest_entry_date
+        period_start = period_end - timedelta(days=6)
+        rows = _load_weekly_analysis_rows(db, period_start, period_end)
+
+        if not rows:
+            raise HTTPException(status_code=404, detail="No journal analyses found for any 7-day period.")
+
+    analyses, journal_ids, average_mood_score = _serialize_weekly_analyses(rows)
+
+    existing = db.execute(
+        text("""
+        SELECT id, insight_type, period_start, period_end, insight_text, structured_output, created_at
+        FROM ai_insights
+        WHERE category = 'journal'
+          AND insight_type = 'journal_weekly_summary'
+          AND period_start = :period_start
+          AND period_end = :period_end
+        ORDER BY created_at DESC
+        LIMIT 1
+        """),
+        {"period_start": period_start, "period_end": period_end},
+    ).fetchone()
+
+    if existing:
+        return {
+            **dict(existing._mapping),
+            "entry_count": len(rows),
+            "journal_ids": journal_ids,
+            "average_mood_score": average_mood_score,
+        }
+
+    structured = build_journal_period_summary(
+        analyses=analyses,
+        period_type="weekly",
+        period_start=str(period_start),
+        period_end=str(period_end),
+    )
+
+    input_payload = {
+        "period_type": "weekly",
+        "entry_count": len(rows),
+        "journal_ids": journal_ids,
+        "average_mood_score": average_mood_score,
+        "analyses": analyses,
+    }
+
+    result = db.execute(
+        text("""
+        INSERT INTO ai_insights (
+            insight_type,
+            insight_date,
+            period_start,
+            period_end,
+            category,
+            model_provider,
+            model_name,
+            prompt_version,
+            input_payload,
+            insight_text,
+            structured_output,
+            status
+        )
+        VALUES (
+            'journal_weekly_summary',
+            CURRENT_DATE,
+            :period_start,
+            :period_end,
+            'journal',
+            'anthropic',
+            'claude-haiku-4-5',
+            'v1',
+            CAST(:input_payload AS jsonb),
+            :insight_text,
+            CAST(:structured_output AS jsonb),
+            'complete'
+        )
+        RETURNING id, insight_type, period_start, period_end, insight_text, structured_output, created_at
+        """),
+        {
+            "period_start": period_start,
+            "period_end": period_end,
+            "input_payload": json.dumps(input_payload, default=str),
+            "insight_text": structured.get("summary", ""),
+            "structured_output": json.dumps(structured, default=str),
+        }
+    ).fetchone()
+
+    db.commit()
+
+    return {
+        "id": result.id,
+        "insight_type": result.insight_type,
+        "period_start": str(result.period_start),
+        "period_end": str(result.period_end),
+        "insight_text": result.insight_text,
+        "structured_output": result.structured_output,
+        "created_at": result.created_at,
+        "entry_count": len(rows),
+        "journal_ids": journal_ids,
+        "average_mood_score": average_mood_score,
+    }
+
+@router.get("/journal/weekly-summary")
+def get_weekly_journal_summaries(db: Session = Depends(get_db)):
+    rows = db.execute(
+        text("""
+        SELECT id, insight_type, period_start, period_end, insight_text, structured_output, created_at
+        FROM ai_insights
+        WHERE category = 'journal'
+          AND insight_type = 'journal_weekly_summary'
+        ORDER BY period_start DESC, created_at DESC
+        """)
+    ).fetchall()
+
+    return [dict(row._mapping) for row in rows]
 
 @router.get("/journal/profiles")
 def get_journal_profiles(db: Session = Depends(get_db)):

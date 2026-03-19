@@ -123,6 +123,10 @@ CREATE TABLE IF NOT EXISTS convo (
 -- AI SCHEMA 
 ------------------------------------------------------------------------
 -- ai_insights.sql
+------------------------------------------------------------------------
+-- AI SCHEMA 
+------------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS ai_insights (
   id BIGSERIAL PRIMARY KEY,
   insight_type TEXT NOT NULL CHECK (
@@ -135,12 +139,17 @@ CREATE TABLE IF NOT EXISTS ai_insights (
       'mental_health',
       'habit_insight',
       'journal_entry_analysis',
-      'journal_weekly_summary'
+      'journal_weekly_summary',
+      'journal_monthly_summary',
+      'journal_yearly_summary'
     )
   ),
   insight_date DATE NOT NULL DEFAULT CURRENT_DATE,
   period_start DATE,
   period_end DATE,
+  period_type TEXT CHECK (
+    period_type IN ('daily', 'weekly', 'monthly', 'yearly')
+  ),
   category TEXT NOT NULL DEFAULT 'general' CHECK (
     category IN (
       'general',
@@ -177,6 +186,9 @@ CREATE INDEX IF NOT EXISTS idx_ai_insights_insight_date
 CREATE INDEX IF NOT EXISTS idx_ai_insights_period
   ON ai_insights (period_start, period_end);
 
+CREATE INDEX IF NOT EXISTS idx_ai_insights_period_type
+  ON ai_insights (period_type);
+
 CREATE INDEX IF NOT EXISTS idx_ai_insights_category
   ON ai_insights (category);
 
@@ -188,6 +200,18 @@ CREATE INDEX IF NOT EXISTS idx_ai_insights_input_payload_gin
 
 CREATE INDEX IF NOT EXISTS idx_ai_insights_structured_output_gin
   ON ai_insights USING GIN (structured_output);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_ai_insights_journal_weekly_summary_period
+  ON ai_insights (insight_type, category, period_start, period_end)
+  WHERE insight_type = 'journal_weekly_summary' AND category = 'journal';
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_ai_insights_journal_monthly_summary_period
+  ON ai_insights (insight_type, category, period_start, period_end)
+  WHERE insight_type = 'journal_monthly_summary' AND category = 'journal';
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_ai_insights_journal_yearly_summary_period
+  ON ai_insights (insight_type, category, period_start, period_end)
+  WHERE insight_type = 'journal_yearly_summary' AND category = 'journal';
 
 CREATE OR REPLACE FUNCTION set_ai_insights_updated_at()
 RETURNS TRIGGER AS $$

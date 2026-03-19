@@ -89,7 +89,7 @@ def _extract_json(text: str) -> dict[str, Any]:
 
     raise HTTPException(
         status_code=502,
-        detail="Claude returned invalid JSON for structured journal analysis.",
+        detail="Claude returned invalid JSON for structured output.",
     )
 
 
@@ -157,16 +157,60 @@ Return ONLY valid JSON with the following structure:
 If information is not present in the journal entry, return an empty array or empty string rather than guessing.
 """.strip()
 
+JOURNAL_SUMMARY_SYSTEM_PROMPT = """
+You are a reflective therapist helping someone understand the emotional and psychological story of their recent experiences.
+
+You are summarizing multiple journal entry analyses across a time period.
+
+Your goal is to gently describe what this period felt like, what themes emerged,
+and what emotional shifts or patterns may have been present.
+
+Return ONLY valid JSON in this shape:
+
+{
+  "summary": "",
+  "themes": [],
+  "emotional_trends": [],
+  "stress_patterns": [],
+  "positive_patterns": [],
+  "direction_signals": [],
+  "reflection_questions": []
+}
+
+Field guidance:
+- summary: a warm, reflective narrative (3–6 sentences) describing the emotional arc of the period
+- themes: recurring themes or concerns
+- emotional_trends: shifts or repeated emotional tendencies over time
+- stress_patterns: repeated sources of tension or pressure
+- positive_patterns: moments of relief, growth, motivation, or clarity
+- direction_signals: signals about values, interests, or life direction
+- reflection_questions: 2–4 thoughtful questions to help the user reflect deeper
+
+Tone:
+- calm, grounded, and therapist-like
+- not overly clinical or robotic
+- not overly poetic or dramatic
+
+Rules:
+- Base conclusions only on the provided analyses
+- Do not diagnose or label the user
+- Do not overstate certainty
+- If a pattern is weak, omit it
+"""
+
 
 LONG_TERM_PROFILE_SYSTEM_PROMPT = """
-You are a reflective personal therapist and long-term life pattern analyst.
+You are a reflective therapist and long-term life pattern analyst.
 
-Your role is not to judge or diagnose, but to identify recurring emotional,
-behavioral, motivational, and value-based patterns over time.
+Your role is to help the user understand recurring emotional, behavioral,
+and motivational patterns across time.
 
-You are analyzing multiple journal entry analyses from the same person across a period of time.
+You are analyzing multiple journal entry analyses from the same person.
 
-Your goal is to identify stable and recurring patterns, not isolated one-time reactions.
+Focus on identifying patterns that feel stable or repeatedly present,
+rather than one-time reactions.
+
+Your goal is to help the user see themselves more clearly.
 
 Focus on identifying:
 
@@ -251,6 +295,26 @@ def analyze_journal_entry_structured(entry: dict[str, Any]) -> dict[str, Any]:
     )
     return _extract_json(raw)
 
+def build_journal_period_summary(
+    analyses: list[dict[str, Any]],
+    period_type: str,
+    period_start: str,
+    period_end: str,
+) -> dict[str, Any]:
+    payload = {
+        "period_type": period_type,
+        "period_start": period_start,
+        "period_end": period_end,
+        "analyses": analyses,
+    }
+
+    raw = _message(
+        system_prompt=JOURNAL_SUMMARY_SYSTEM_PROMPT,
+        user_prompt=f"Journal entry analyses:\n{json.dumps(payload, default=str)}",
+        max_tokens=1100,
+    )
+
+    return _extract_json(raw)
 
 def build_journal_pattern_profile(
     analyses: list[dict[str, Any]],
