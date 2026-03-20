@@ -3,10 +3,13 @@
     <header class="header">
       <div>
         <h1 class="title">JOURNAL INSIGHTS</h1>
-        <p class="subtitle">Weekly pattern profiles and daily entry insights</p>
+        <p class="subtitle">Monthly + weekly pattern profiles and daily entry insights</p>
       </div>
 
       <div class="actions">
+        <button class="btn" type="button" :disabled="isGeneratingMonthly" @click="generateMonthly">
+          {{ isGeneratingMonthly ? "GENERATING..." : "GENERATE MONTHLY" }}
+        </button>
         <button class="btn" type="button" :disabled="isGeneratingWeekly" @click="generateWeekly">
           {{ isGeneratingWeekly ? "GENERATING..." : "GENERATE WEEKLY" }}
         </button>
@@ -19,13 +22,98 @@
     <section class="panel">
       <div class="meta-row">
         <span v-if="status" class="status">{{ status }}</span>
-        <span v-if="isLoadingProfiles">LOADING PROFILES...</span>
-        <span v-if="isLoadingWeeklySummaries">LOADING SUMMARIES...</span>
+        <span v-if="isLoadingMonthlyProfiles">LOADING MONTHLY PROFILES...</span>
+        <span v-if="isLoadingMonthlySummaries">LOADING MONTHLY SUMMARIES...</span>
+        <span v-if="isLoadingWeeklyProfiles">LOADING WEEKLY PROFILES...</span>
+        <span v-if="isLoadingWeeklySummaries">LOADING WEEKLY SUMMARIES...</span>
         <span v-if="isLoadingDailyInsights">LOADING DAILY INSIGHTS...</span>
       </div>
 
       <p v-if="weeklyError" class="error-text">{{ weeklyError }}</p>
       <p v-if="dailyError" class="error-text">{{ dailyError }}</p>
+
+      <button class="accordion-toggle top-level" type="button" @click="toggleMonthlyRoot">
+        <span class="summary-arrow" :class="{ open: monthlyRootOpen }">▶</span>
+        <span>MONTHLY</span>
+        <span class="section-count">{{ monthlyStacks.length }}</span>
+      </button>
+
+      <transition name="expand">
+        <div v-if="monthlyRootOpen" class="accordion-body">
+          <p
+            v-if="!isLoadingMonthlyProfiles && !isLoadingMonthlySummaries && monthlyStacks.length === 0"
+            class="empty-text"
+          >
+            No monthly profiles yet.
+          </p>
+
+          <div v-else class="accordion-tree">
+            <article
+              v-for="month in monthlyStacks"
+              :key="month.key"
+              class="profile-card"
+            >
+              <button
+                class="accordion-toggle profile-toggle"
+                type="button"
+                @click="toggleMonth(month.key)"
+              >
+                <span
+                  class="summary-arrow"
+                  :class="{ open: isMonthOpen(month.key) }"
+                >
+                  ▶
+                </span>
+                <span>
+                  {{ formatRange(month.period_start, month.period_end) }}
+                </span>
+                <span class="section-count">
+                  {{ monthlyStackBadge(month) }}
+                </span>
+              </button>
+
+              <transition name="expand">
+                <div v-if="isMonthOpen(month.key)" class="profile-body">
+                  <section v-if="month.summary" class="profile-section">
+                    <h3 class="stack-block-title">[ SUMMARY ]</h3>
+                    <p class="profile-paragraph">{{ monthlySummaryText(month) }}</p>
+                  </section>
+
+                  <section
+                    v-if="monthlySummaryThemes(month).length"
+                    class="profile-section"
+                  >
+                    <h3 class="stack-block-title">[ THEMES ]</h3>
+                    <ul class="profile-list">
+                      <li v-for="(item, idx) in monthlySummaryThemes(month)" :key="idx">
+                        {{ item }}
+                      </li>
+                    </ul>
+                  </section>
+
+                  <div v-if="month.summary && month.profile" class="stack-divider"></div>
+
+                  <section v-if="month.profile" class="profile-section">
+                    <h3 class="stack-block-title">[ PATTERN ANALYSIS ]</h3>
+                    <p class="stack-kv" v-if="month.profile.dominant_emotions?.length">
+                      dominant_emotions: {{ joinList(month.profile.dominant_emotions) }}
+                    </p>
+                    <p class="stack-kv" v-if="month.profile.recurring_stressors?.length">
+                      stressors: {{ joinList(month.profile.recurring_stressors) }}
+                    </p>
+                    <p class="stack-kv" v-if="month.profile.motivation_drivers?.length">
+                      motivation_drivers: {{ joinList(month.profile.motivation_drivers) }}
+                    </p>
+                    <p class="stack-quote" v-if="month.profile.pattern_summary">
+                      > {{ month.profile.pattern_summary }}
+                    </p>
+                  </section>
+                </div>
+              </transition>
+            </article>
+          </div>
+        </div>
+      </transition>
 
       <button class="accordion-toggle top-level" type="button" @click="toggleWeeklyRoot">
         <span class="summary-arrow" :class="{ open: weeklyRootOpen }">▶</span>
@@ -35,7 +123,10 @@
 
       <transition name="expand">
         <div v-if="weeklyRootOpen" class="accordion-body">
-          <p v-if="!isLoadingProfiles && !isLoadingWeeklySummaries && weeklyStacks.length === 0" class="empty-text">
+          <p
+            v-if="!isLoadingWeeklyProfiles && !isLoadingWeeklySummaries && weeklyStacks.length === 0"
+            class="empty-text"
+          >
             No weekly profiles yet.
           </p>
 
@@ -143,10 +234,19 @@
                       <span class="daily-entry-time">{{ formatDateTime(entry.created_at) }}</span>
                     </div>
 
-                    <section class="profile-section">
-                      <h3 class="profile-section-title">ENTRY</h3>
-                      <p class="profile-paragraph">{{ entry.content }}</p>
-                    </section>
+                    <button class="entry-toggle" type="button" @click="toggleEntry(entry.id)">
+                      <span class="summary-arrow" :class="{ open: isEntryOpen(entry.id) }">▶</span>
+                      <span class="entry-toggle-text">
+                        {{ isEntryOpen(entry.id) ? "HIDE ENTRY" : "READ ENTRY" }}
+                      </span>
+                    </button>
+
+                    <transition name="expand">
+                      <section v-if="isEntryOpen(entry.id)" class="profile-section">
+                        <h3 class="profile-section-title">ENTRY</h3>
+                        <p class="profile-paragraph">{{ entry.content }}</p>
+                      </section>
+                    </transition>
 
                     <p v-if="entry.analysisError" class="error-text">{{ entry.analysisError }}</p>
                     <p v-else-if="!entry.analysis" class="empty-text">No insight for this entry yet.</p>
@@ -270,21 +370,29 @@ const apiBaseCandidates = [...new Set(
 )];
 const activeApiBaseUrl = ref(apiBaseCandidates[0] ?? "http://localhost:8000");
 
-const profiles = ref([]);
+const weeklyProfiles = ref([]);
+const monthlyProfiles = ref([]);
 const weeklySummaries = ref([]);
+const monthlySummaries = ref([]);
 const dailyInsights = ref([]);
-const isLoadingProfiles = ref(false);
+const isLoadingWeeklyProfiles = ref(false);
+const isLoadingMonthlyProfiles = ref(false);
 const isLoadingWeeklySummaries = ref(false);
+const isLoadingMonthlySummaries = ref(false);
 const isLoadingDailyInsights = ref(false);
 const isGeneratingWeekly = ref(false);
+const isGeneratingMonthly = ref(false);
 const status = ref("");
 const weeklyError = ref("");
 const dailyError = ref("");
 
+const monthlyRootOpen = ref(false);
 const weeklyRootOpen = ref(false);
 const dailyRootOpen = ref(false);
 const openProfiles = ref({});
+const openMonths = ref({});
 const openDays = ref({});
+const expandedEntries = ref({});
 
 function flash(msg) {
   status.value = msg;
@@ -342,6 +450,10 @@ function goBack() {
   router.push("/journal");
 }
 
+function toggleMonthlyRoot() {
+  monthlyRootOpen.value = !monthlyRootOpen.value;
+}
+
 function toggleWeeklyRoot() {
   weeklyRootOpen.value = !weeklyRootOpen.value;
 }
@@ -361,6 +473,17 @@ function isProfileOpen(id) {
   return !!openProfiles.value[id];
 }
 
+function toggleMonth(id) {
+  openMonths.value = {
+    ...openMonths.value,
+    [id]: !openMonths.value[id]
+  };
+}
+
+function isMonthOpen(id) {
+  return !!openMonths.value[id];
+}
+
 function toggleDay(day) {
   openDays.value = {
     ...openDays.value,
@@ -370,6 +493,17 @@ function toggleDay(day) {
 
 function isDayOpen(day) {
   return !!openDays.value[day];
+}
+
+function toggleEntry(id) {
+  expandedEntries.value = {
+    ...expandedEntries.value,
+    [id]: !expandedEntries.value[id]
+  };
+}
+
+function isEntryOpen(id) {
+  return !!expandedEntries.value[id];
 }
 
 function parseCalendarDate(value) {
@@ -458,9 +592,21 @@ function weeklySummaryText(week) {
   return structured.summary || week.summary.insight_text || "";
 }
 
+function monthlySummaryText(month) {
+  if (!month?.summary) return "";
+  const structured = parseStructuredOutput(month.summary.structured_output);
+  return structured.summary || month.summary.insight_text || "";
+}
+
 function weeklySummaryThemes(week) {
   if (!week?.summary) return [];
   const structured = parseStructuredOutput(week.summary.structured_output);
+  return Array.isArray(structured.themes) ? structured.themes : [];
+}
+
+function monthlySummaryThemes(month) {
+  if (!month?.summary) return [];
+  const structured = parseStructuredOutput(month.summary.structured_output);
   return Array.isArray(structured.themes) ? structured.themes : [];
 }
 
@@ -475,6 +621,24 @@ function weeklyStackBadge(week) {
 
   if (hasProfile) {
     const count = week.profile?.entry_count ?? 0;
+    return `${count} ENTRIES`;
+  }
+
+  if (hasSummary) return "SUMMARY";
+  return "";
+}
+
+function monthlyStackBadge(month) {
+  const hasSummary = !!month?.summary;
+  const hasProfile = !!month?.profile;
+
+  if (hasSummary && hasProfile) {
+    const count = month.profile?.entry_count ?? 0;
+    return `${count} ENTRIES`;
+  }
+
+  if (hasProfile) {
+    const count = month.profile?.entry_count ?? 0;
     return `${count} ENTRIES`;
   }
 
@@ -499,7 +663,8 @@ const weeklyStacks = computed(() => {
     return byPeriod.get(key);
   };
 
-  for (const profile of profiles.value) {
+  for (const profile of weeklyProfiles.value) {
+    if (profile?.period_type && profile.period_type !== "weekly") continue;
     const periodStart = String(profile?.period_start ?? "");
     const periodEnd = String(profile?.period_end ?? "");
     if (!periodStart || !periodEnd) continue;
@@ -526,6 +691,61 @@ const weeklyStacks = computed(() => {
       entryTimestamp(summary?.created_at) > entryTimestamp(week.summary?.created_at)
     ) {
       week.summary = summary;
+    }
+  }
+
+  return [...byPeriod.values()].sort((a, b) => {
+    const byStart = String(b.period_start).localeCompare(String(a.period_start));
+    if (byStart !== 0) return byStart;
+    return String(b.period_end).localeCompare(String(a.period_end));
+  });
+});
+
+const monthlyStacks = computed(() => {
+  const byPeriod = new Map();
+
+  const ensureMonth = (periodStart, periodEnd) => {
+    const key = `${periodStart}|${periodEnd}`;
+    if (!byPeriod.has(key)) {
+      byPeriod.set(key, {
+        key,
+        period_start: periodStart,
+        period_end: periodEnd,
+        summary: null,
+        profile: null
+      });
+    }
+    return byPeriod.get(key);
+  };
+
+  for (const profile of monthlyProfiles.value) {
+    if (profile?.period_type && profile.period_type !== "monthly") continue;
+    const periodStart = String(profile?.period_start ?? "");
+    const periodEnd = String(profile?.period_end ?? "");
+    if (!periodStart || !periodEnd) continue;
+
+    const month = ensureMonth(periodStart, periodEnd);
+
+    if (
+      !month.profile ||
+      entryTimestamp(profile?.created_at) > entryTimestamp(month.profile?.created_at)
+    ) {
+      month.profile = profile;
+    }
+  }
+
+  for (const summary of monthlySummaries.value) {
+    const periodStart = String(summary?.period_start ?? "");
+    const periodEnd = String(summary?.period_end ?? "");
+    if (!periodStart || !periodEnd) continue;
+
+    const month = ensureMonth(periodStart, periodEnd);
+
+    if (
+      !month.summary ||
+      entryTimestamp(summary?.created_at) > entryTimestamp(month.summary?.created_at)
+    ) {
+      month.summary = summary;
     }
   }
 
@@ -568,23 +788,42 @@ const groupedDailyInsights = computed(() => {
     }));
 });
 
-async function loadProfiles() {
-  isLoadingProfiles.value = true;
+async function loadWeeklyProfiles() {
+  isLoadingWeeklyProfiles.value = true;
   weeklyError.value = "";
 
   try {
-    const res = await apiFetch("/insights/journal/profiles");
+    const res = await apiFetch("/insights/journal/profiles?period_type=weekly");
     if (!res.ok) {
       const msg = await readApiError(res);
       throw new Error(msg);
     }
 
     const data = await res.json();
-    profiles.value = Array.isArray(data) ? data : [];
+    weeklyProfiles.value = Array.isArray(data) ? data : [];
   } catch (e) {
-    weeklyError.value = `Unable to load journal profiles: ${withApiHint(e)}`;
+    weeklyError.value = `Unable to load weekly profiles: ${withApiHint(e)}`;
   } finally {
-    isLoadingProfiles.value = false;
+    isLoadingWeeklyProfiles.value = false;
+  }
+}
+
+async function loadMonthlyProfiles() {
+  isLoadingMonthlyProfiles.value = true;
+
+  try {
+    const res = await apiFetch("/insights/journal/monthly-profile");
+    if (!res.ok) {
+      const msg = await readApiError(res);
+      throw new Error(msg);
+    }
+
+    const data = await res.json();
+    monthlyProfiles.value = Array.isArray(data) ? data : [];
+  } catch (e) {
+    weeklyError.value = `Unable to load monthly profiles: ${withApiHint(e)}`;
+  } finally {
+    isLoadingMonthlyProfiles.value = false;
   }
 }
 
@@ -613,9 +852,35 @@ async function loadWeeklySummaries() {
   }
 }
 
+async function loadMonthlySummaries() {
+  isLoadingMonthlySummaries.value = true;
+
+  try {
+    const res = await apiFetch("/insights/journal/monthly-summary");
+
+    if (res.status === 404) {
+      monthlySummaries.value = [];
+      return;
+    }
+
+    if (!res.ok) {
+      const msg = await readApiError(res);
+      throw new Error(msg);
+    }
+
+    const data = await res.json();
+    monthlySummaries.value = Array.isArray(data) ? data : [];
+  } catch (e) {
+    weeklyError.value = `Unable to load monthly summaries: ${withApiHint(e)}`;
+  } finally {
+    isLoadingMonthlySummaries.value = false;
+  }
+}
+
 async function loadDailyInsights() {
   isLoadingDailyInsights.value = true;
   dailyError.value = "";
+  expandedEntries.value = {};
 
   try {
     const res = await apiFetch("/journal/");
@@ -684,7 +949,7 @@ async function generateWeekly() {
     }
 
     await Promise.all([summaryRes.json(), profileRes.json()]);
-    await Promise.all([loadProfiles(), loadWeeklySummaries()]);
+    await Promise.all([loadWeeklyProfiles(), loadWeeklySummaries()]);
     flash(
       activeApiBaseUrl.value
         ? `WEEKLY SUMMARY + PROFILE CREATED (${activeApiBaseUrl.value})`
@@ -698,8 +963,52 @@ async function generateWeekly() {
   }
 }
 
+async function generateMonthly() {
+  isGeneratingMonthly.value = true;
+  weeklyError.value = "";
+
+  try {
+    const summaryRes = await apiFetch("/insights/journal/monthly-summary", {
+      method: "POST"
+    });
+
+    if (!summaryRes.ok) {
+      const msg = await readApiError(summaryRes);
+      throw new Error(msg);
+    }
+
+    const profileRes = await apiFetch("/insights/journal/monthly-profile", {
+      method: "POST"
+    });
+
+    if (!profileRes.ok) {
+      const msg = await readApiError(profileRes);
+      throw new Error(msg);
+    }
+
+    await Promise.all([summaryRes.json(), profileRes.json()]);
+    await Promise.all([loadMonthlyProfiles(), loadMonthlySummaries()]);
+    flash(
+      activeApiBaseUrl.value
+        ? `MONTHLY SUMMARY + PROFILE CREATED (${activeApiBaseUrl.value})`
+        : "MONTHLY SUMMARY + PROFILE CREATED"
+    );
+  } catch (e) {
+    weeklyError.value = `Unable to generate monthly profile: ${withApiHint(e)}`;
+    flash("GENERATION FAILED");
+  } finally {
+    isGeneratingMonthly.value = false;
+  }
+}
+
 onMounted(async () => {
-  await Promise.all([loadProfiles(), loadWeeklySummaries(), loadDailyInsights()]);
+  await Promise.all([
+    loadWeeklyProfiles(),
+    loadMonthlyProfiles(),
+    loadWeeklySummaries(),
+    loadMonthlySummaries(),
+    loadDailyInsights()
+  ]);
 });
 </script>
 
@@ -855,6 +1164,29 @@ onMounted(async () => {
   font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.entry-toggle {
+  margin-top: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.entry-toggle:hover {
+  color: var(--fg);
+}
+
+.entry-toggle-text {
+  font-size: 13px;
 }
 
 .profile-body {

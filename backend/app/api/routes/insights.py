@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 import json
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
@@ -58,6 +59,139 @@ def _serialize_weekly_analyses(rows):
 
     avg_mood = round(sum(mood_scores) / len(mood_scores), 2) if mood_scores else None
     return analyses, journal_ids, avg_mood
+
+
+def _month_bounds(anchor_date: date) -> tuple[date, date]:
+    period_start = anchor_date.replace(day=1)
+    if period_start.month == 12:
+        next_month_start = date(period_start.year + 1, 1, 1)
+    else:
+        next_month_start = date(period_start.year, period_start.month + 1, 1)
+    period_end = next_month_start - timedelta(days=1)
+    return period_start, period_end
+
+
+def _coerce_json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _coerce_str_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            item = item.strip()
+            if item:
+                out.append(item)
+    return out
+
+
+def _load_weekly_profile_rows_for_month(db: Session, period_start: date, period_end: date) -> list[JournalPatternProfile]:
+    rows = (
+        db.query(JournalPatternProfile)
+        .filter(
+            JournalPatternProfile.period_type == "weekly",
+            JournalPatternProfile.period_end >= period_start,
+            JournalPatternProfile.period_start <= period_end,
+        )
+        .order_by(
+            JournalPatternProfile.period_start.asc(),
+            JournalPatternProfile.period_end.asc(),
+            JournalPatternProfile.created_at.asc(),
+        )
+        .all()
+    )
+
+    # Weekly profiles are not unique by period range; keep only the newest row per range.
+    latest_by_period: dict[tuple[date, date], JournalPatternProfile] = {}
+    for row in rows:
+        latest_by_period[(row.period_start, row.period_end)] = row
+
+    return sorted(
+        latest_by_period.values(),
+        key=lambda row: (row.period_start, row.period_end, row.created_at),
+    )
+
+
+def _resolve_monthly_profile_window(db: Session) -> tuple[date, date, list[JournalPatternProfile]]:
+    period_start, period_end = _month_bounds(date.today())
+    weekly_profiles = _load_weekly_profile_rows_for_month(db, period_start, period_end)
+    if weekly_profiles:
+        return period_start, period_end, weekly_profiles
+
+    latest_weekly_end = (
+        db.query(JournalPatternProfile.period_end)
+        .filter(JournalPatternProfile.period_type == "weekly")
+        .order_by(JournalPatternProfile.period_end.desc(), JournalPatternProfile.created_at.desc())
+        .limit(1)
+        .scalar()
+    )
+    if latest_weekly_end is None:
+        raise HTTPException(status_code=404, detail="No weekly journal profiles exist yet.")
+
+    period_start, period_end = _month_bounds(latest_weekly_end)
+    weekly_profiles = _load_weekly_profile_rows_for_month(db, period_start, period_end)
+    if not weekly_profiles:
+        raise HTTPException(
+            status_code=404,
+            detail="No weekly journal profiles found for any month.",
+        )
+
+    return period_start, period_end, weekly_profiles
+
+
+def _load_weekly_summary_rows_for_month(db: Session, period_start: date, period_end: date):
+    return db.execute(
+        text("""
+        SELECT id, period_start, period_end, insight_text, structured_output, created_at
+        FROM ai_insights
+        WHERE category = 'journal'
+          AND insight_type = 'journal_weekly_summary'
+          AND period_end >= :period_start
+          AND period_start <= :period_end
+        ORDER BY period_start ASC, period_end ASC, created_at ASC
+        """),
+        {"period_start": period_start, "period_end": period_end},
+    ).fetchall()
+
+
+def _resolve_monthly_summary_window(db: Session):
+    period_start, period_end = _month_bounds(date.today())
+    weekly_summaries = _load_weekly_summary_rows_for_month(db, period_start, period_end)
+    if weekly_summaries:
+        return period_start, period_end, weekly_summaries
+
+    latest_weekly_end = db.execute(
+        text("""
+        SELECT period_end
+        FROM ai_insights
+        WHERE category = 'journal'
+          AND insight_type = 'journal_weekly_summary'
+        ORDER BY period_end DESC, created_at DESC
+        LIMIT 1
+        """)
+    ).scalar()
+    if latest_weekly_end is None:
+        raise HTTPException(status_code=404, detail="No weekly journal summaries exist yet.")
+
+    period_start, period_end = _month_bounds(latest_weekly_end)
+    weekly_summaries = _load_weekly_summary_rows_for_month(db, period_start, period_end)
+    if not weekly_summaries:
+        raise HTTPException(
+            status_code=404,
+            detail="No weekly journal summaries found for any month.",
+        )
+
+    return period_start, period_end, weekly_summaries
 
 @router.post("/weekly")
 def create_weekly_insight(db: Session = Depends(get_db)):
@@ -302,6 +436,150 @@ def create_weekly_journal_profile(db: Session = Depends(get_db)):
     db.refresh(profile)
     return profile
 
+
+@router.post("/journal/monthly-profile", response_model=JournalPatternProfileOut)
+def create_monthly_journal_profile(db: Session = Depends(get_db)):
+    period_start, period_end, weekly_profiles = _resolve_monthly_profile_window(db)
+
+    existing = (
+        db.query(JournalPatternProfile)
+        .filter(
+            JournalPatternProfile.period_type == "monthly",
+            JournalPatternProfile.period_start == period_start,
+            JournalPatternProfile.period_end == period_end,
+        )
+        .order_by(JournalPatternProfile.created_at.desc())
+        .first()
+    )
+    if existing:
+        return existing
+
+    analyses = []
+    mood_scores = []
+    total_entries = 0
+
+    for weekly in weekly_profiles:
+        mood_value = float(weekly.average_mood_score) if weekly.average_mood_score is not None else None
+        if mood_value is not None:
+            mood_scores.append(mood_value)
+        total_entries += int(weekly.entry_count or 0)
+
+        analyses.append(
+            {
+                "journal_entry_id": f"weekly-profile-{weekly.id}",
+                "entry_date": str(weekly.period_end),
+                "mood_score": mood_value,
+                "emotional_tone": "",
+                "key_emotions": weekly.dominant_emotions or [],
+                "stressors": weekly.recurring_stressors or [],
+                "positive_signals": weekly.recurring_positive_signals or [],
+                "thinking_patterns": weekly.recurring_thinking_patterns or [],
+                "life_direction_signals": weekly.recurring_life_direction_signals or [],
+                "insight": weekly.pattern_summary or "",
+                "reflection_questions": [],
+                "encouragement": "",
+                "source_week_profile_id": int(weekly.id),
+                "source_week_period_start": str(weekly.period_start),
+                "source_week_period_end": str(weekly.period_end),
+                "source_entry_count": int(weekly.entry_count or 0),
+            }
+        )
+
+    structured = build_journal_pattern_profile(
+        analyses=analyses,
+        period_type="monthly",
+        period_start=str(period_start),
+        period_end=str(period_end),
+    )
+
+    average_mood_score = (
+        round(sum(mood_scores) / len(mood_scores), 2) if mood_scores else structured.get("average_mood_score")
+    )
+
+    profile = JournalPatternProfile(
+        period_type="monthly",
+        period_start=period_start,
+        period_end=period_end,
+        entry_count=total_entries,
+        model_provider="anthropic",
+        model_name="claude-haiku-4-5",
+        prompt_version="v3-monthly-from-weekly-profiles",
+        average_mood_score=average_mood_score,
+        dominant_emotions=structured.get("dominant_emotions", []),
+        recurring_stressors=structured.get("recurring_stressors", []),
+        recurring_positive_signals=structured.get("recurring_positive_signals", []),
+        recurring_thinking_patterns=structured.get("recurring_thinking_patterns", []),
+        recurring_life_direction_signals=structured.get("recurring_life_direction_signals", []),
+        core_values=structured.get("core_values", []),
+        motivation_drivers=structured.get("motivation_drivers", []),
+        growth_signals=structured.get("growth_signals", []),
+        risk_signals=structured.get("risk_signals", []),
+        pattern_summary=structured.get("pattern_summary"),
+        raw_output={
+            **structured,
+            "source_type": "weekly_profiles",
+            "source_week_count": len(weekly_profiles),
+            "source_total_entry_count": total_entries,
+        },
+    )
+    db.add(profile)
+
+    db.execute(
+        text("""
+            INSERT INTO ai_insights (
+                insight_type,
+                insight_date,
+                period_start,
+                period_end,
+                period_type,
+                category,
+                model_provider,
+                model_name,
+                prompt_version,
+                input_payload,
+                insight_text,
+                structured_output,
+                status
+            )
+            VALUES (
+                'pattern_detection',
+                CURRENT_DATE,
+                :period_start,
+                :period_end,
+                'monthly',
+                'journal',
+                'anthropic',
+                'claude-haiku-4-5',
+                'v3-monthly-from-weekly-profiles',
+                CAST(:input_payload AS jsonb),
+                :insight_text,
+                CAST(:structured_output AS jsonb),
+                'complete'
+            )
+        """),
+        {
+            "period_start": period_start,
+            "period_end": period_end,
+            "input_payload": json.dumps(
+                {
+                    "period_type": "monthly",
+                    "source_type": "weekly_profiles",
+                    "source_week_count": len(weekly_profiles),
+                    "source_total_entry_count": total_entries,
+                    "source_weekly_profiles": analyses,
+                },
+                default=str,
+            ),
+            "insight_text": structured.get("pattern_summary", ""),
+            "structured_output": json.dumps(structured, default=str),
+        },
+    )
+
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
 @router.post("/journal/weekly-summary")
 def create_weekly_journal_summary(db: Session = Depends(get_db)):
     period_end = date.today()
@@ -423,6 +701,136 @@ def create_weekly_journal_summary(db: Session = Depends(get_db)):
         "average_mood_score": average_mood_score,
     }
 
+
+@router.post("/journal/monthly-summary")
+def create_monthly_journal_summary(db: Session = Depends(get_db)):
+    period_start, period_end, weekly_summaries = _resolve_monthly_summary_window(db)
+
+    source_weekly_summary_ids = [int(row.id) for row in weekly_summaries]
+
+    existing = db.execute(
+        text("""
+        SELECT id, insight_type, period_start, period_end, insight_text, structured_output, created_at
+        FROM ai_insights
+        WHERE category = 'journal'
+          AND insight_type = 'journal_monthly_summary'
+          AND period_start = :period_start
+          AND period_end = :period_end
+        ORDER BY created_at DESC
+        LIMIT 1
+        """),
+        {"period_start": period_start, "period_end": period_end},
+    ).fetchone()
+
+    if existing:
+        return {
+            **dict(existing._mapping),
+            "source_week_count": len(weekly_summaries),
+            "source_weekly_summary_ids": source_weekly_summary_ids,
+        }
+
+    analyses = []
+    themes_set = set()
+    for row in weekly_summaries:
+        structured_output = _coerce_json_object(row.structured_output)
+        themes = _coerce_str_list(structured_output.get("themes"))
+        for theme in themes:
+            themes_set.add(theme)
+
+        analyses.append(
+            {
+                "journal_entry_id": f"weekly-summary-{row.id}",
+                "entry_date": str(row.period_end),
+                "mood_score": None,
+                "emotional_tone": "",
+                "key_emotions": [],
+                "stressors": _coerce_str_list(structured_output.get("stress_patterns")),
+                "positive_signals": _coerce_str_list(structured_output.get("positive_patterns")),
+                "thinking_patterns": _coerce_str_list(structured_output.get("emotional_trends")),
+                "life_direction_signals": _coerce_str_list(structured_output.get("direction_signals")),
+                "insight": structured_output.get("summary") or row.insight_text or "",
+                "reflection_questions": _coerce_str_list(structured_output.get("reflection_questions")),
+                "encouragement": "",
+                "source_week_summary_id": int(row.id),
+                "source_week_period_start": str(row.period_start),
+                "source_week_period_end": str(row.period_end),
+                "source_themes": themes,
+            }
+        )
+
+    structured = build_journal_period_summary(
+        analyses=analyses,
+        period_type="monthly",
+        period_start=str(period_start),
+        period_end=str(period_end),
+    )
+
+    input_payload = {
+        "period_type": "monthly",
+        "source_type": "weekly_summaries",
+        "source_week_count": len(weekly_summaries),
+        "source_weekly_summary_ids": source_weekly_summary_ids,
+        "source_themes": sorted(themes_set),
+        "analyses": analyses,
+    }
+
+    result = db.execute(
+        text("""
+        INSERT INTO ai_insights (
+            insight_type,
+            insight_date,
+            period_start,
+            period_end,
+            period_type,
+            category,
+            model_provider,
+            model_name,
+            prompt_version,
+            input_payload,
+            insight_text,
+            structured_output,
+            status
+        )
+        VALUES (
+            'journal_monthly_summary',
+            CURRENT_DATE,
+            :period_start,
+            :period_end,
+            'monthly',
+            'journal',
+            'anthropic',
+            'claude-haiku-4-5',
+            'v2-monthly-from-weekly-summaries',
+            CAST(:input_payload AS jsonb),
+            :insight_text,
+            CAST(:structured_output AS jsonb),
+            'complete'
+        )
+        RETURNING id, insight_type, period_start, period_end, insight_text, structured_output, created_at
+        """),
+        {
+            "period_start": period_start,
+            "period_end": period_end,
+            "input_payload": json.dumps(input_payload, default=str),
+            "insight_text": structured.get("summary", ""),
+            "structured_output": json.dumps(structured, default=str),
+        }
+    ).fetchone()
+
+    db.commit()
+
+    return {
+        "id": result.id,
+        "insight_type": result.insight_type,
+        "period_start": str(result.period_start),
+        "period_end": str(result.period_end),
+        "insight_text": result.insight_text,
+        "structured_output": result.structured_output,
+        "created_at": result.created_at,
+        "source_week_count": len(weekly_summaries),
+        "source_weekly_summary_ids": source_weekly_summary_ids,
+    }
+
 @router.get("/journal/weekly-summary")
 def get_weekly_journal_summaries(db: Session = Depends(get_db)):
     rows = db.execute(
@@ -437,16 +845,46 @@ def get_weekly_journal_summaries(db: Session = Depends(get_db)):
 
     return [dict(row._mapping) for row in rows]
 
-@router.get("/journal/profiles")
-def get_journal_profiles(db: Session = Depends(get_db)):
+
+@router.get("/journal/monthly-summary")
+def get_monthly_journal_summaries(db: Session = Depends(get_db)):
+    rows = db.execute(
+        text("""
+        SELECT id, insight_type, period_start, period_end, insight_text, structured_output, created_at
+        FROM ai_insights
+        WHERE category = 'journal'
+          AND insight_type = 'journal_monthly_summary'
+        ORDER BY period_start DESC, created_at DESC
+        """)
+    ).fetchall()
+
+    return [dict(row._mapping) for row in rows]
+
+
+@router.get("/journal/monthly-profile")
+def get_monthly_journal_profiles(db: Session = Depends(get_db)):
     rows = (
         db.query(JournalPatternProfile)
+        .filter(JournalPatternProfile.period_type == "monthly")
         .order_by(
             JournalPatternProfile.period_start.desc(),
             JournalPatternProfile.created_at.desc()
         )
         .all()
     )
+    return rows
+
+
+@router.get("/journal/profiles")
+def get_journal_profiles(period_type: str | None = None, db: Session = Depends(get_db)):
+    query = db.query(JournalPatternProfile)
+    if period_type:
+        query = query.filter(JournalPatternProfile.period_type == period_type)
+
+    rows = query.order_by(
+        JournalPatternProfile.period_start.desc(),
+        JournalPatternProfile.created_at.desc()
+    ).all()
 
     return rows
 
