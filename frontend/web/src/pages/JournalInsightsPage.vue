@@ -674,7 +674,7 @@ async function generateWeekly() {
       throw new Error(msg);
     }
 
-    const profileRes = await apiFetch("/insights/journal/weekly", {
+    const profileRes = await apiFetch("/insights/journal/weekly-profile", {
       method: "POST"
     });
 

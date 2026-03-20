@@ -167,7 +167,7 @@ def create_weekly_insight(db: Session = Depends(get_db)):
     }
 
 
-@router.post("/journal/weekly", response_model=JournalPatternProfileOut)
+@router.post("/journal/weekly-profile", response_model=JournalPatternProfileOut)
 def create_weekly_journal_profile(db: Session = Depends(get_db)):
     period_end = date.today()
     period_start = period_end - timedelta(days=6)

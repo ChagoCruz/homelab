@@ -480,7 +480,7 @@ async function submit() {
 
     flash(
       activeApiBaseUrl.value
-        ? `SUBMITTED + INSIGHT READY (${activeApiBaseUrl.value})`
+        ? `SUBMITTED + INSIGHT READY`
         : "SUBMITTED + INSIGHT READY"
     );
   } catch (e) {
