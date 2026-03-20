@@ -299,7 +299,13 @@ function openEntry() {
 
 async function openReflect() {
   mode.value = "reflect";
-  await loadEntries();
+
+  if (!hasLoadedEntries.value) {
+    await loadEntries();
+    return;
+  }
+
+  await Promise.all(entries.value.map((entry) => loadEntryInsights(entry.id)));
 }
 
 function goToInsights() {
