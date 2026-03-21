@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, model_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,28 @@ from app.services.claude_service import (
 from app.services.ollama_service import generate_weekly_report
 
 router = APIRouter(prefix="/insights", tags=["insights"])
+
+class JournalWeeklyPeriodRequest(BaseModel):
+    period_start: date | None = None
+    period_end: date | None = None
+
+    @model_validator(mode="after")
+    def validate_dates(self):
+        if (self.period_start is None) != (self.period_end is None):
+            raise ValueError("period_start and period_end must be provided together")
+
+        if self.period_start and self.period_end and self.period_start > self.period_end:
+            raise ValueError("period_start must be on or before period_end")
+
+        return self
+    
+def _resolve_weekly_window(payload: JournalWeeklyPeriodRequest | None) -> tuple[date, date]:
+    if payload and payload.period_start and payload.period_end:
+        return payload.period_start, payload.period_end
+
+    period_end = date.today() - timedelta(days=1)
+    period_start = period_end - timedelta(days=6)
+    return period_start, period_end
 
 def _load_weekly_analysis_rows(db: Session, period_start: date, period_end: date):
     return (
@@ -302,19 +325,13 @@ def create_weekly_insight(db: Session = Depends(get_db)):
 
 
 @router.post("/journal/weekly-profile", response_model=JournalPatternProfileOut)
-def create_weekly_journal_profile(db: Session = Depends(get_db)):
-    period_end = date.today()
-    period_start = period_end - timedelta(days=6)
+def create_weekly_journal_profile(
+    payload: JournalWeeklyPeriodRequest | None = None,
+    db: Session = Depends(get_db),
+):
+    period_start, period_end = _resolve_weekly_window(payload)
 
-    def load_rows(window_start: date, window_end: date):
-        return (
-            db.query(JournalEntryAnalysis)
-            .join(Journal, JournalEntryAnalysis.journal_entry_id == Journal.id)
-            .filter(Journal.entry_date >= window_start, Journal.entry_date <= window_end)
-            .all()
-        )
-
-    rows = load_rows(period_start, period_end)
+    rows = _load_weekly_analysis_rows(db, period_start, period_end)
 
     if not rows:
         latest_entry_date = (
@@ -330,32 +347,34 @@ def create_weekly_journal_profile(db: Session = Depends(get_db)):
 
         period_end = latest_entry_date
         period_start = period_end - timedelta(days=6)
-        rows = load_rows(period_start, period_end)
+        rows = _load_weekly_analysis_rows(db, period_start, period_end)
 
-    if not rows:
-        raise HTTPException(status_code=404, detail="No journal analyses found for any 7-day period.")
+        if not rows:
+            if payload and payload.period_start and payload.period_end:
+                raise HTTPException(status_code=404, detail="No journal analyses found for the requested period.")
 
     analyses = []
     mood_scores = []
 
-    for row in rows:
+    for analysis, journal in rows:
         analyses.append(
             {
-                "journal_entry_id": row.journal_entry_id,
-                "mood_score": float(row.mood_score) if row.mood_score is not None else None,
-                "emotional_tone": row.emotional_tone,
-                "key_emotions": row.key_emotions or [],
-                "stressors": row.stressors or [],
-                "positive_signals": row.positive_signals or [],
-                "thinking_patterns": row.thinking_patterns or [],
-                "life_direction_signals": row.life_direction_signals or [],
-                "insight": row.insight,
-                "reflection_questions": row.reflection_questions or [],
-                "encouragement": row.encouragement,
+                "journal_entry_id": analysis.journal_entry_id,
+                "entry_date": str(journal.entry_date),
+                "mood_score": float(analysis.mood_score) if analysis.mood_score is not None else None,
+                "emotional_tone": analysis.emotional_tone,
+                "key_emotions": analysis.key_emotions or [],
+                "stressors": analysis.stressors or [],
+                "positive_signals": analysis.positive_signals or [],
+                "thinking_patterns": analysis.thinking_patterns or [],
+                "life_direction_signals": analysis.life_direction_signals or [],
+                "insight": analysis.insight,
+                "reflection_questions": analysis.reflection_questions or [],
+                "encouragement": analysis.encouragement,
             }
         )
-        if row.mood_score is not None:
-            mood_scores.append(float(row.mood_score))
+        if analysis.mood_score is not None:
+            mood_scores.append(float(analysis.mood_score))
 
     structured = build_journal_pattern_profile(
         analyses=analyses,
@@ -581,9 +600,11 @@ def create_monthly_journal_profile(db: Session = Depends(get_db)):
 
 
 @router.post("/journal/weekly-summary")
-def create_weekly_journal_summary(db: Session = Depends(get_db)):
-    period_end = date.today()
-    period_start = period_end - timedelta(days=6)
+def create_weekly_journal_summary(
+    payload: JournalWeeklyPeriodRequest | None = None,
+    db: Session = Depends(get_db),
+):
+    period_start, period_end = _resolve_weekly_window(payload)
 
     rows = _load_weekly_analysis_rows(db, period_start, period_end)
 
@@ -604,7 +625,8 @@ def create_weekly_journal_summary(db: Session = Depends(get_db)):
         rows = _load_weekly_analysis_rows(db, period_start, period_end)
 
         if not rows:
-            raise HTTPException(status_code=404, detail="No journal analyses found for any 7-day period.")
+            if payload and payload.period_start and payload.period_end:
+                raise HTTPException(status_code=404, detail="No journal analyses found for the requested period.")
 
     analyses, journal_ids, average_mood_score = _serialize_weekly_analyses(rows)
 
