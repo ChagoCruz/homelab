@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 import json
-from typing import Any
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, model_validator
 from sqlalchemy import text
@@ -94,127 +92,21 @@ def _month_bounds(anchor_date: date) -> tuple[date, date]:
     return period_start, period_end
 
 
-def _coerce_json_object(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
-    return {}
-
-
-def _coerce_str_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    out: list[str] = []
-    for item in value:
-        if isinstance(item, str):
-            item = item.strip()
-            if item:
-                out.append(item)
-    return out
-
-
-def _load_weekly_profile_rows_for_month(db: Session, period_start: date, period_end: date) -> list[JournalPatternProfile]:
-    rows = (
-        db.query(JournalPatternProfile)
-        .filter(
-            JournalPatternProfile.period_type == "weekly",
-            JournalPatternProfile.period_end >= period_start,
-            JournalPatternProfile.period_start <= period_end,
-        )
-        .order_by(
-            JournalPatternProfile.period_start.asc(),
-            JournalPatternProfile.period_end.asc(),
-            JournalPatternProfile.created_at.asc(),
-        )
-        .all()
-    )
-
-    # Weekly profiles are not unique by period range; keep only the newest row per range.
-    latest_by_period: dict[tuple[date, date], JournalPatternProfile] = {}
-    for row in rows:
-        latest_by_period[(row.period_start, row.period_end)] = row
-
-    return sorted(
-        latest_by_period.values(),
-        key=lambda row: (row.period_start, row.period_end, row.created_at),
-    )
-
-
-def _resolve_monthly_profile_window(db: Session) -> tuple[date, date, list[JournalPatternProfile]]:
-    period_start, period_end = _month_bounds(date.today())
-    weekly_profiles = _load_weekly_profile_rows_for_month(db, period_start, period_end)
-    if weekly_profiles:
-        return period_start, period_end, weekly_profiles
-
-    latest_weekly_end = (
-        db.query(JournalPatternProfile.period_end)
-        .filter(JournalPatternProfile.period_type == "weekly")
-        .order_by(JournalPatternProfile.period_end.desc(), JournalPatternProfile.created_at.desc())
+def _latest_analyzed_entry_date(db: Session) -> date | None:
+    return (
+        db.query(Journal.entry_date)
+        .join(JournalEntryAnalysis, JournalEntryAnalysis.journal_entry_id == Journal.id)
+        .order_by(Journal.entry_date.desc(), Journal.id.desc())
         .limit(1)
         .scalar()
     )
-    if latest_weekly_end is None:
-        raise HTTPException(status_code=404, detail="No weekly journal profiles exist yet.")
-
-    period_start, period_end = _month_bounds(latest_weekly_end)
-    weekly_profiles = _load_weekly_profile_rows_for_month(db, period_start, period_end)
-    if not weekly_profiles:
-        raise HTTPException(
-            status_code=404,
-            detail="No weekly journal profiles found for any month.",
-        )
-
-    return period_start, period_end, weekly_profiles
 
 
-def _load_weekly_summary_rows_for_month(db: Session, period_start: date, period_end: date):
-    return db.execute(
-        text("""
-        SELECT id, period_start, period_end, insight_text, structured_output, created_at
-        FROM ai_insights
-        WHERE category = 'journal'
-          AND insight_type = 'journal_weekly_summary'
-          AND period_end >= :period_start
-          AND period_start <= :period_end
-        ORDER BY period_start ASC, period_end ASC, created_at ASC
-        """),
-        {"period_start": period_start, "period_end": period_end},
-    ).fetchall()
+def _resolve_monthly_window(payload: JournalWeeklyPeriodRequest | None) -> tuple[date, date]:
+    if payload and payload.period_start and payload.period_end:
+        return payload.period_start, payload.period_end
 
-
-def _resolve_monthly_summary_window(db: Session):
-    period_start, period_end = _month_bounds(date.today())
-    weekly_summaries = _load_weekly_summary_rows_for_month(db, period_start, period_end)
-    if weekly_summaries:
-        return period_start, period_end, weekly_summaries
-
-    latest_weekly_end = db.execute(
-        text("""
-        SELECT period_end
-        FROM ai_insights
-        WHERE category = 'journal'
-          AND insight_type = 'journal_weekly_summary'
-        ORDER BY period_end DESC, created_at DESC
-        LIMIT 1
-        """)
-    ).scalar()
-    if latest_weekly_end is None:
-        raise HTTPException(status_code=404, detail="No weekly journal summaries exist yet.")
-
-    period_start, period_end = _month_bounds(latest_weekly_end)
-    weekly_summaries = _load_weekly_summary_rows_for_month(db, period_start, period_end)
-    if not weekly_summaries:
-        raise HTTPException(
-            status_code=404,
-            detail="No weekly journal summaries found for any month.",
-        )
-
-    return period_start, period_end, weekly_summaries
+    return _month_bounds(date.today())
 
 @router.post("/weekly")
 def create_weekly_insight(db: Session = Depends(get_db)):
@@ -334,13 +226,7 @@ def create_weekly_journal_profile(
     rows = _load_weekly_analysis_rows(db, period_start, period_end)
 
     if not rows:
-        latest_entry_date = (
-            db.query(Journal.entry_date)
-            .join(JournalEntryAnalysis, JournalEntryAnalysis.journal_entry_id == Journal.id)
-            .order_by(Journal.entry_date.desc(), Journal.id.desc())
-            .limit(1)
-            .scalar()
-        )
+        latest_entry_date = _latest_analyzed_entry_date(db)
 
         if latest_entry_date is None:
             raise HTTPException(status_code=404, detail="No analyzed journal entries exist yet.")
@@ -457,8 +343,25 @@ def create_weekly_journal_profile(
 
 
 @router.post("/journal/monthly-profile", response_model=JournalPatternProfileOut)
-def create_monthly_journal_profile(db: Session = Depends(get_db)):
-    period_start, period_end, weekly_profiles = _resolve_monthly_profile_window(db)
+def create_monthly_journal_profile(
+    payload: JournalWeeklyPeriodRequest | None = None,
+    db: Session = Depends(get_db),
+):
+    period_start, period_end = _resolve_monthly_window(payload)
+    rows = _load_weekly_analysis_rows(db, period_start, period_end)
+
+    if not rows:
+        latest_entry_date = _latest_analyzed_entry_date(db)
+        if latest_entry_date is None:
+            raise HTTPException(status_code=404, detail="No analyzed journal entries exist yet.")
+
+        if payload and payload.period_start and payload.period_end:
+            raise HTTPException(status_code=404, detail="No journal analyses found for the requested period.")
+
+        period_start, period_end = _month_bounds(latest_entry_date)
+        rows = _load_weekly_analysis_rows(db, period_start, period_end)
+        if not rows:
+            raise HTTPException(status_code=404, detail="No journal analyses found for any month.")
 
     existing = (
         db.query(JournalPatternProfile)
@@ -473,36 +376,7 @@ def create_monthly_journal_profile(db: Session = Depends(get_db)):
     if existing:
         return existing
 
-    analyses = []
-    mood_scores = []
-    total_entries = 0
-
-    for weekly in weekly_profiles:
-        mood_value = float(weekly.average_mood_score) if weekly.average_mood_score is not None else None
-        if mood_value is not None:
-            mood_scores.append(mood_value)
-        total_entries += int(weekly.entry_count or 0)
-
-        analyses.append(
-            {
-                "journal_entry_id": f"weekly-profile-{weekly.id}",
-                "entry_date": str(weekly.period_end),
-                "mood_score": mood_value,
-                "emotional_tone": "",
-                "key_emotions": weekly.dominant_emotions or [],
-                "stressors": weekly.recurring_stressors or [],
-                "positive_signals": weekly.recurring_positive_signals or [],
-                "thinking_patterns": weekly.recurring_thinking_patterns or [],
-                "life_direction_signals": weekly.recurring_life_direction_signals or [],
-                "insight": weekly.pattern_summary or "",
-                "reflection_questions": [],
-                "encouragement": "",
-                "source_week_profile_id": int(weekly.id),
-                "source_week_period_start": str(weekly.period_start),
-                "source_week_period_end": str(weekly.period_end),
-                "source_entry_count": int(weekly.entry_count or 0),
-            }
-        )
+    analyses, journal_ids, average_mood_score = _serialize_weekly_analyses(rows)
 
     structured = build_journal_pattern_profile(
         analyses=analyses,
@@ -511,18 +385,17 @@ def create_monthly_journal_profile(db: Session = Depends(get_db)):
         period_end=str(period_end),
     )
 
-    average_mood_score = (
-        round(sum(mood_scores) / len(mood_scores), 2) if mood_scores else structured.get("average_mood_score")
-    )
+    if average_mood_score is None:
+        average_mood_score = structured.get("average_mood_score")
 
     profile = JournalPatternProfile(
         period_type="monthly",
         period_start=period_start,
         period_end=period_end,
-        entry_count=total_entries,
+        entry_count=len(rows),
         model_provider="anthropic",
         model_name="claude-haiku-4-5",
-        prompt_version="v3-monthly-from-weekly-profiles",
+        prompt_version="v3-monthly-from-journal-analyses",
         average_mood_score=average_mood_score,
         dominant_emotions=structured.get("dominant_emotions", []),
         recurring_stressors=structured.get("recurring_stressors", []),
@@ -536,9 +409,9 @@ def create_monthly_journal_profile(db: Session = Depends(get_db)):
         pattern_summary=structured.get("pattern_summary"),
         raw_output={
             **structured,
-            "source_type": "weekly_profiles",
-            "source_week_count": len(weekly_profiles),
-            "source_total_entry_count": total_entries,
+            "source_type": "journal_analyses",
+            "source_entry_count": len(rows),
+            "source_journal_ids": journal_ids,
         },
     )
     db.add(profile)
@@ -569,7 +442,7 @@ def create_monthly_journal_profile(db: Session = Depends(get_db)):
                 'journal',
                 'anthropic',
                 'claude-haiku-4-5',
-                'v3-monthly-from-weekly-profiles',
+                'v3-monthly-from-journal-analyses',
                 CAST(:input_payload AS jsonb),
                 :insight_text,
                 CAST(:structured_output AS jsonb),
@@ -582,10 +455,11 @@ def create_monthly_journal_profile(db: Session = Depends(get_db)):
             "input_payload": json.dumps(
                 {
                     "period_type": "monthly",
-                    "source_type": "weekly_profiles",
-                    "source_week_count": len(weekly_profiles),
-                    "source_total_entry_count": total_entries,
-                    "source_weekly_profiles": analyses,
+                    "source_type": "journal_analyses",
+                    "entry_count": len(rows),
+                    "journal_ids": journal_ids,
+                    "average_mood_score": average_mood_score,
+                    "analyses": analyses,
                 },
                 default=str,
             ),
@@ -609,13 +483,7 @@ def create_weekly_journal_summary(
     rows = _load_weekly_analysis_rows(db, period_start, period_end)
 
     if not rows:
-        latest_entry_date = (
-            db.query(Journal.entry_date)
-            .join(JournalEntryAnalysis, JournalEntryAnalysis.journal_entry_id == Journal.id)
-            .order_by(Journal.entry_date.desc(), Journal.id.desc())
-            .limit(1)
-            .scalar()
-        )
+        latest_entry_date = _latest_analyzed_entry_date(db)
 
         if latest_entry_date is None:
             raise HTTPException(status_code=404, detail="No analyzed journal entries exist yet.")
@@ -725,10 +593,27 @@ def create_weekly_journal_summary(
 
 
 @router.post("/journal/monthly-summary")
-def create_monthly_journal_summary(db: Session = Depends(get_db)):
-    period_start, period_end, weekly_summaries = _resolve_monthly_summary_window(db)
+def create_monthly_journal_summary(
+    payload: JournalWeeklyPeriodRequest | None = None,
+    db: Session = Depends(get_db),
+):
+    period_start, period_end = _resolve_monthly_window(payload)
+    rows = _load_weekly_analysis_rows(db, period_start, period_end)
 
-    source_weekly_summary_ids = [int(row.id) for row in weekly_summaries]
+    if not rows:
+        latest_entry_date = _latest_analyzed_entry_date(db)
+        if latest_entry_date is None:
+            raise HTTPException(status_code=404, detail="No analyzed journal entries exist yet.")
+
+        if payload and payload.period_start and payload.period_end:
+            raise HTTPException(status_code=404, detail="No journal analyses found for the requested period.")
+
+        period_start, period_end = _month_bounds(latest_entry_date)
+        rows = _load_weekly_analysis_rows(db, period_start, period_end)
+        if not rows:
+            raise HTTPException(status_code=404, detail="No journal analyses found for any month.")
+
+    analyses, journal_ids, average_mood_score = _serialize_weekly_analyses(rows)
 
     existing = db.execute(
         text("""
@@ -747,38 +632,10 @@ def create_monthly_journal_summary(db: Session = Depends(get_db)):
     if existing:
         return {
             **dict(existing._mapping),
-            "source_week_count": len(weekly_summaries),
-            "source_weekly_summary_ids": source_weekly_summary_ids,
+            "entry_count": len(rows),
+            "journal_ids": journal_ids,
+            "average_mood_score": average_mood_score,
         }
-
-    analyses = []
-    themes_set = set()
-    for row in weekly_summaries:
-        structured_output = _coerce_json_object(row.structured_output)
-        themes = _coerce_str_list(structured_output.get("themes"))
-        for theme in themes:
-            themes_set.add(theme)
-
-        analyses.append(
-            {
-                "journal_entry_id": f"weekly-summary-{row.id}",
-                "entry_date": str(row.period_end),
-                "mood_score": None,
-                "emotional_tone": "",
-                "key_emotions": [],
-                "stressors": _coerce_str_list(structured_output.get("stress_patterns")),
-                "positive_signals": _coerce_str_list(structured_output.get("positive_patterns")),
-                "thinking_patterns": _coerce_str_list(structured_output.get("emotional_trends")),
-                "life_direction_signals": _coerce_str_list(structured_output.get("direction_signals")),
-                "insight": structured_output.get("summary") or row.insight_text or "",
-                "reflection_questions": _coerce_str_list(structured_output.get("reflection_questions")),
-                "encouragement": "",
-                "source_week_summary_id": int(row.id),
-                "source_week_period_start": str(row.period_start),
-                "source_week_period_end": str(row.period_end),
-                "source_themes": themes,
-            }
-        )
 
     structured = build_journal_period_summary(
         analyses=analyses,
@@ -789,10 +646,10 @@ def create_monthly_journal_summary(db: Session = Depends(get_db)):
 
     input_payload = {
         "period_type": "monthly",
-        "source_type": "weekly_summaries",
-        "source_week_count": len(weekly_summaries),
-        "source_weekly_summary_ids": source_weekly_summary_ids,
-        "source_themes": sorted(themes_set),
+        "source_type": "journal_analyses",
+        "entry_count": len(rows),
+        "journal_ids": journal_ids,
+        "average_mood_score": average_mood_score,
         "analyses": analyses,
     }
 
@@ -822,7 +679,7 @@ def create_monthly_journal_summary(db: Session = Depends(get_db)):
             'journal',
             'anthropic',
             'claude-haiku-4-5',
-            'v2-monthly-from-weekly-summaries',
+            'v3-monthly-from-journal-analyses',
             CAST(:input_payload AS jsonb),
             :insight_text,
             CAST(:structured_output AS jsonb),
@@ -849,8 +706,9 @@ def create_monthly_journal_summary(db: Session = Depends(get_db)):
         "insight_text": result.insight_text,
         "structured_output": result.structured_output,
         "created_at": result.created_at,
-        "source_week_count": len(weekly_summaries),
-        "source_weekly_summary_ids": source_weekly_summary_ids,
+        "entry_count": len(rows),
+        "journal_ids": journal_ids,
+        "average_mood_score": average_mood_score,
     }
 
 @router.get("/journal/weekly-summary")
