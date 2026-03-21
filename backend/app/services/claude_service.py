@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 import json
 import os
+import re
 
 from anthropic import Anthropic
 from fastapi import HTTPException
@@ -61,30 +62,133 @@ def _message(system_prompt: str, user_prompt: str, max_tokens: int = 900) -> str
         raise HTTPException(status_code=502, detail=f"Claude request failed: {e}")
 
 
-def _extract_json(text: str) -> dict[str, Any]:
+def _extract_first_balanced_object(text: str) -> Optional[str]:
+    """
+    Finds the first balanced JSON object-like block in a string.
+    """
+    start = text.find("{")
+    while start != -1:
+        depth = 0
+        in_string = False
+        escaped = False
+
+        for idx in range(start, len(text)):
+            char = text[idx]
+
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == "\"":
+                    in_string = False
+                continue
+
+            if char == "\"":
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : idx + 1]
+
+        start = text.find("{", start + 1)
+
+    return None
+
+
+def _normalize_json_candidate(candidate: str) -> str:
+    normalized = candidate.strip()
+    normalized = normalized.replace("\ufeff", "")
+    normalized = normalized.replace("“", "\"").replace("”", "\"")
+    normalized = normalized.replace("‘", "'").replace("’", "'")
+
+    if normalized.lower().startswith("json\n"):
+        normalized = normalized.split("\n", 1)[1]
+
+    # Common model mistake: trailing commas in JSON objects/arrays.
+    normalized = re.sub(r",\s*([}\]])", r"\1", normalized)
+    return normalized
+
+
+def _iter_json_candidates(text: str):
+    seen = set()
+
+    def _yield(candidate: str):
+        candidate = candidate.strip()
+        if not candidate or candidate in seen:
+            return
+        seen.add(candidate)
+        yield candidate
+
+    stripped = text.strip()
+    for candidate in _yield(stripped):
+        yield candidate
+
+    fences = re.findall(r"```(?:json)?\s*([\s\S]*?)```", stripped, flags=re.IGNORECASE)
+    for fenced in fences:
+        for candidate in _yield(fenced):
+            yield candidate
+
+    balanced = _extract_first_balanced_object(stripped)
+    if balanced:
+        for candidate in _yield(balanced):
+            yield candidate
+
+    for fenced in fences:
+        balanced_fenced = _extract_first_balanced_object(fenced)
+        if balanced_fenced:
+            for candidate in _yield(balanced_fenced):
+                yield candidate
+
+
+def _parse_json_dict(candidate: str) -> Optional[dict[str, Any]]:
+    attempts = [candidate, _normalize_json_candidate(candidate)]
+    for attempt in attempts:
+        try:
+            data = json.loads(attempt)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+JSON_REPAIR_SYSTEM_PROMPT = """
+You are a strict JSON repair utility.
+
+You will receive malformed or noisy text that is intended to represent a JSON object.
+Return ONLY one valid JSON object.
+
+Rules:
+- Keep the original keys and values whenever possible.
+- Do not add markdown, prose, or code fences.
+- If a value is unclear, preserve it as a string.
+- If there is no recoverable object, return {}.
+""".strip()
+
+
+def _extract_json(text: str, allow_repair: bool = True) -> dict[str, Any]:
     """
     Attempts to parse a JSON object from the model output.
     """
     text = text.strip()
 
-    # direct parse
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict):
-            return data
-    except json.JSONDecodeError:
-        pass
+    for candidate in _iter_json_candidates(text):
+        parsed = _parse_json_dict(candidate)
+        if parsed is not None:
+            return parsed
 
-    # fallback: find first {...} block
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidate = text[start : end + 1]
+    if allow_repair:
         try:
-            data = json.loads(candidate)
-            if isinstance(data, dict):
-                return data
-        except json.JSONDecodeError:
+            repaired = _message(
+                system_prompt=JSON_REPAIR_SYSTEM_PROMPT,
+                user_prompt=f"Repair this output into valid JSON:\n\n{text}",
+                max_tokens=1200,
+            )
+            return _extract_json(repaired, allow_repair=False)
+        except HTTPException:
             pass
 
     raise HTTPException(
