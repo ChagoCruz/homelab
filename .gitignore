@@ -21,3 +21,9 @@ frontend/**/.vite/
 frontend/**/.env
 frontend/**/.env.*
 !frontend/**/.env.example
+
+#--------------------------------------
+# Backup system (local config + logs)
+#--------------------------------------
+ops/backups/backup_postgres.env
+ops/backups/backup.log
