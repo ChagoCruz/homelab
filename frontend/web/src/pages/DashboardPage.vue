@@ -24,6 +24,30 @@
               <span class="kv-key">ai</span>
               <span class="kv-value">ollama / gemma3:4b</span>
             </div>
+            <div class="kv-row">
+              <span class="kv-key">weather summary</span>
+              <span class="kv-value">{{ displayWeatherValue(latestWeather?.weather_summary) }}</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">temp max</span>
+              <span class="kv-value">{{ displayWeatherValue(latestWeather?.temp_max_f, formatTemp) }}</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">temp min</span>
+              <span class="kv-value">{{ displayWeatherValue(latestWeather?.temp_min_f, formatTemp) }}</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">sunrise</span>
+              <span class="kv-value">{{ displayWeatherValue(latestWeather?.sunrise, formatClockTime) }}</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">sunset</span>
+              <span class="kv-value">{{ displayWeatherValue(latestWeather?.sunset, formatClockTime) }}</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">moon phase</span>
+              <span class="kv-value">{{ displayWeatherValue(latestWeather?.moon_phase_name) }}</span>
+            </div>
           </div>
         </section>
 
@@ -46,7 +70,66 @@
 </template>
 
 <script setup>
+import { onMounted, ref } from "vue";
 import AIInsightPanel from "../components/AIInsightPanel.vue";
+
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+const latestWeather = ref(null);
+const weatherLoading = ref(false);
+const weatherError = ref("");
+
+async function fetchLatestWeather() {
+  weatherLoading.value = true;
+  weatherError.value = "";
+
+  try {
+    const res = await fetch(`${API_BASE}/weather/latest`);
+
+    if (res.status === 404) {
+      latestWeather.value = null;
+      return;
+    }
+
+    if (!res.ok) {
+      throw new Error(`failed to load weather (${res.status})`);
+    }
+
+    latestWeather.value = await res.json();
+  } catch (err) {
+    latestWeather.value = null;
+    weatherError.value = err?.message || "unable to load weather";
+  } finally {
+    weatherLoading.value = false;
+  }
+}
+
+function displayWeatherValue(value, formatter) {
+  if (weatherLoading.value) return "loading...";
+  if (weatherError.value) return "unavailable";
+  if (value === null || value === undefined || value === "") return "--";
+
+  const formatted = formatter ? formatter(value) : String(value);
+  return formatted || "--";
+}
+
+function formatTemp(value) {
+  const n = Number(value);
+  if (Number.isNaN(n)) return "--";
+  return `${n.toFixed(1)}°f`;
+}
+
+function formatClockTime(value) {
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return "--";
+
+  return dt.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+onMounted(fetchLatestWeather);
 </script>
 
 <style scoped>
