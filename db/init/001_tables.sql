@@ -121,25 +121,21 @@ CREATE TABLE IF NOT EXISTS convo (
 
 CREATE TABLE weather_daily (
     id BIGSERIAL PRIMARY KEY,
-
     weather_date DATE NOT NULL UNIQUE,
-
     weather_code INTEGER,
     weather_summary TEXT NOT NULL,
-
     temp_max_f NUMERIC(5,2),
     temp_min_f NUMERIC(5,2),
-
     sunrise TIMESTAMP,
     sunset TIMESTAMP,
-
     moon_phase_percent NUMERIC(5,2),
     moon_phase_name TEXT,
-
     raw_payload JSONB,
-
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_weather_daily_weather_date
+ON weather_daily (weather_date);
 
 ------------------------------------------------------------------------
 -- AI SCHEMA 
