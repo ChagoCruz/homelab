@@ -9,6 +9,7 @@ from sqlalchemy import (
     Text,
     DateTime,
     ForeignKey,
+    TIMESTAMP,
     Numeric,
 )
 from sqlalchemy.sql import func
@@ -169,3 +170,25 @@ class JournalPatternProfile(Base):
   raw_output = Column(JSONB, nullable=True)
 
   created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+class WeatherDaily(Base):
+    __tablename__ = "weather_daily"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    weather_date = Column(Date, nullable=False, unique=True, index=True)
+
+    weather_code = Column(Integer, nullable=True)
+    weather_summary = Column(Text, nullable=False)
+
+    temp_max_f = Column(Numeric(5, 2), nullable=True)
+    temp_min_f = Column(Numeric(5, 2), nullable=True)
+
+    sunrise = Column(TIMESTAMP, nullable=True)
+    sunset = Column(TIMESTAMP, nullable=True)
+
+    moon_phase_percent = Column(Numeric(5, 2), nullable=True)
+    moon_phase_name = Column(Text, nullable=True)
+
+    raw_payload = Column(JSONB, nullable=True)
+
+    created_at = Column(TIMESTAMP, nullable=False, server_default=func.now())

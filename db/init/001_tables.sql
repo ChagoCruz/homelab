@@ -119,6 +119,28 @@ CREATE TABLE IF NOT EXISTS convo (
 	description TEXT NOT NULL
 );
 
+CREATE TABLE weather_daily (
+    id BIGSERIAL PRIMARY KEY,
+
+    weather_date DATE NOT NULL UNIQUE,
+
+    weather_code INTEGER,
+    weather_summary TEXT NOT NULL,
+
+    temp_max_f NUMERIC(5,2),
+    temp_min_f NUMERIC(5,2),
+
+    sunrise TIMESTAMP,
+    sunset TIMESTAMP,
+
+    moon_phase_percent NUMERIC(5,2),
+    moon_phase_name TEXT,
+
+    raw_payload JSONB,
+
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
 ------------------------------------------------------------------------
 -- AI SCHEMA 
 ------------------------------------------------------------------------
