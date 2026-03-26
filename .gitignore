@@ -27,3 +27,4 @@ frontend/**/.env.*
 #--------------------------------------
 ops/backups/backup_postgres.env
 ops/backups/backup.log
+ops/weather/weather.log
