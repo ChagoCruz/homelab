@@ -13,19 +13,19 @@ fi
 
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 
-INTERNAL_DIR="${INTERNAL_DIR:-/mnt/backup/postgres_backups}"
-USB_DIR="${USB_DIR:-/mnt/usb-backup/postgres_backups}"
+PRIMARY_DIR="${PRIMARY_DIR:-/mnt/storage/postgres_backups}"
+SECONDARY_DIR="${SECONDARY_DIR:-/mnt/backup/postgres_backups}"
 
-INTERNAL_MOUNT="${INTERNAL_MOUNT:-/mnt/backup}"
-USB_MOUNT="${USB_MOUNT:-/mnt/usb-backup}"
+PRIMARY_MOUNT="${PRIMARY_MOUNT:-/mnt/storage}"
+SECONDARY_MOUNT="${SECONDARY_MOUNT:-/mnt/backup}"
 
 CONTAINER_NAME="${CONTAINER_NAME:-homelab-postgres}"
 DB_NAME="${DB_NAME:-homelab}"
 DB_USER="${DB_USER:-homelab}"
 DOCKER_BIN="${DOCKER_BIN:-/usr/bin/docker}"
 
-INTERNAL_RETENTION_DAYS="${INTERNAL_RETENTION_DAYS:-7}"
-USB_RETENTION_DAYS="${USB_RETENTION_DAYS:-14}"
+PRIMARY_RETENTION_DAYS="${INTERNAL_RETENTION_DAYS:-7}"
+SECONDARY_RETENTION_DAYS="${USB_RETENTION_DAYS:-14}"
 
 # Ensure required commands exist
 if [ ! -x "$DOCKER_BIN" ]; then
@@ -34,14 +34,14 @@ if [ ! -x "$DOCKER_BIN" ]; then
 fi
 
 # Ensure internal backup drive is mounted
-if ! mountpoint -q "$INTERNAL_MOUNT"; then
-  echo "ERROR: Internal backup drive is not mounted at $INTERNAL_MOUNT" >&2
+if ! mountpoint -q "$PRIMARY_MOUNT"; then
+  echo "ERROR: Internal backup drive is not mounted at $PRIMARY_MOUNT" >&2
   exit 1
 fi
 
-mkdir -p "$INTERNAL_DIR"
+mkdir -p "$PRIMARY_DIR"
 
-BACKUP_FILE="$INTERNAL_DIR/${DB_NAME}_$TIMESTAMP.sql"
+BACKUP_FILE="$PRIMARY_DIR/${DB_NAME}_$TIMESTAMP.sql"
 
 echo "Creating Postgres backup: $BACKUP_FILE"
 "$DOCKER_BIN" exec "$CONTAINER_NAME" \
@@ -50,20 +50,20 @@ echo "Creating Postgres backup: $BACKUP_FILE"
 echo "Backup created successfully."
 
 # Copy to USB drive if mounted
-if mountpoint -q "$USB_MOUNT"; then
-  mkdir -p "$USB_DIR"
-  cp "$BACKUP_FILE" "$USB_DIR/"
-  echo "Backup copied to USB drive at $USB_DIR"
+if mountpoint -q "$SECONDARY_MOUNT"; then
+  mkdir -p "$SECONDARY_DIR"
+  cp "$BACKUP_FILE" "$SECONDARY_DIR/"
+  echo "Backup copied to USB drive at $SECONDARY_DIR"
 else
-  echo "USB backup drive not mounted at $USB_MOUNT. Skipping external copy."
+  echo "USB backup drive not mounted at $SECONDARY_MOUNT. Skipping external copy."
 fi
 
-# Retention cleanup: internal
-find "$INTERNAL_DIR" -type f -name "*.sql" -mtime +"$INTERNAL_RETENTION_DAYS" -delete
+# Retention cleanup: primary
+find "$PRIMARY_DIR" -type f -name "*.sql" -mtime +"$PRIMARY_RETENTION_DAYS" -delete
 
 # Retention cleanup: USB
-if mountpoint -q "$USB_MOUNT"; then
-  find "$USB_DIR" -type f -name "*.sql" -mtime +"$USB_RETENTION_DAYS" -delete
+if mountpoint -q "$SECONDARY_MOUNT"; then
+  find "$SECONDARY_DIR" -type f -name "*.sql" -mtime +"$SECONDARY_RETENTION_DAYS" -delete
 fi
 
 echo "Backup job complete."
