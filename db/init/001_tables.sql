@@ -60,6 +60,11 @@ CREATE TABLE journal (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS safety_meeting_daily (
+    entry_date DATE PRIMARY KEY,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE diet (
     id SERIAL PRIMARY KEY,
     log_date DATE NOT NULL DEFAULT CURRENT_DATE,
