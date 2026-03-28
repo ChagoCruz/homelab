@@ -506,7 +506,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import AIInsightPanel from "../components/AIInsightPanel.vue";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -520,6 +520,7 @@ const statsLoading = ref(false);
 const dailyError = ref("");
 const dailyStartDate = ref("");
 const dailyEndDate = ref("");
+const viewportWidth = ref(typeof window === "undefined" ? 1024 : window.innerWidth);
 
 const chartFrame = Object.freeze({
   width: 980,
@@ -539,6 +540,8 @@ const wideChartFrame = Object.freeze({
 });
 const chartViewBox = `0 0 ${chartFrame.width} ${chartFrame.height}`;
 const wideChartViewBox = `0 0 ${wideChartFrame.width} ${wideChartFrame.height}`;
+const isPhonePortrait = computed(() => viewportWidth.value <= 430);
+const maxXTicks = computed(() => (isPhonePortrait.value ? 11 : null));
 
 async function fetchLatestWeather() {
   weatherLoading.value = true;
@@ -713,6 +716,10 @@ function formatTempAxisTick(value) {
   return `${Math.round(value)}°`;
 }
 
+function updateViewportWidth() {
+  viewportWidth.value = window.innerWidth;
+}
+
 function chartX(index, total, frame = chartFrame) {
   const width = frame.width - frame.padLeft - frame.padRight;
   if (total <= 1) return frame.padLeft + width / 2;
@@ -767,14 +774,30 @@ function buildYTicks(min, max, steps, formatter = formatTickNumber, frame = char
   return ticks;
 }
 
-function buildXTicks(points, labeler) {
+function buildXTicks(points, labeler, maxTickCount = null) {
   if (!points.length) return [];
+
+  let selectedIndexes = points.map((_, index) => index);
+  if (typeof maxTickCount === "number" && maxTickCount >= 2 && points.length > maxTickCount) {
+    const stride = Math.max(1, Math.ceil((points.length - 1) / (maxTickCount - 1)));
+    selectedIndexes = [];
+    for (let index = 0; index < points.length; index += stride) {
+      selectedIndexes.push(index);
+    }
+    if (selectedIndexes[selectedIndexes.length - 1] !== points.length - 1) {
+      selectedIndexes.push(points.length - 1);
+    }
+  }
+
   const rows = points.map((point) => point.raw);
-  return points.map((point, index) => ({
+  return selectedIndexes.map((index) => {
+    const point = points[index];
+    return {
     x: point.x,
     label: labeler(point.raw, index, rows),
     anchor: index === 0 ? "start" : (index === points.length - 1 ? "end" : "middle"),
-  }));
+    };
+  });
 }
 
 function resolveMoodFloor(rows, getter) {
@@ -832,7 +855,7 @@ function buildLineChart(rows, getValue, options = {}) {
     points,
     segments: buildPathSegments(points),
     yTicks: buildYTicks(min, max, options.ySteps ?? 4, options.yFormatter ?? formatTickNumber, frame),
-    xTicks: buildXTicks(points, xLabeler),
+    xTicks: buildXTicks(points, xLabeler, options.xMaxTicks),
     min,
     max,
   };
@@ -843,6 +866,7 @@ const dailyMoodChart = computed(() =>
     fixedMin: resolveMoodFloor(dailyFacts.value, (row) => row?.avg_mood_score),
     fixedMax: 10,
     yFormatter: formatMoodTick,
+    xMaxTicks: maxXTicks.value,
   })
 );
 
@@ -895,7 +919,7 @@ const caloriesChart = computed(() => {
     inSegments: buildPathSegments(inPoints),
     outSegments: buildPathSegments(outPoints),
     yTicks: buildYTicks(min, max, 4, formatCalorieTick, frame),
-    xTicks: buildXTicks(inPoints, formatChartDateTick),
+    xTicks: buildXTicks(inPoints, formatChartDateTick, maxXTicks.value),
   };
 });
 
@@ -974,7 +998,7 @@ const moodWeatherChart = computed(() => {
     tempSegments: buildPathSegments(tempPoints),
     moodTicks: buildYTicks(moodMin, moodMax, 4, formatMoodTick, frame),
     tempTicks: buildYTicks(tempMin, tempMax, 4, formatTempAxisTick, frame),
-    xTicks: buildXTicks(moodPoints, formatChartDateTick),
+    xTicks: buildXTicks(moodPoints, formatChartDateTick, maxXTicks.value),
     conditionMarkers,
   };
 });
@@ -990,6 +1014,11 @@ onMounted(() => {
   initializeRanges();
   fetchLatestWeather();
   fetchStats();
+  window.addEventListener("resize", updateViewportWidth);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("resize", updateViewportWidth);
 });
 </script>
 
@@ -1414,6 +1443,46 @@ onMounted(() => {
 
   .charts-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 430px) {
+  .panel-block {
+    padding: 12px;
+  }
+
+  .chart-card {
+    padding: 10px 8px;
+  }
+
+  .chart-header h3 {
+    font-size: 1.08rem;
+  }
+
+  .chart-header span {
+    font-size: 0.82rem;
+  }
+
+  .chart-svg {
+    height: 236px;
+  }
+
+  .axis-label {
+    font-size: 11px;
+    stroke-width: 0.6px;
+  }
+
+  .axis-label-x {
+    font-size: 8.5px;
+  }
+
+  .axis-label-right {
+    font-size: 10px;
+  }
+
+  .legend-pill {
+    font-size: 0.78rem;
+    padding: 2px 7px;
   }
 }
 </style>
