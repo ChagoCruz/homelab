@@ -94,6 +94,13 @@ class BloodPressure(Base):
   diastolic = Column(Integer)
 
 
+class SafetyMeetingDaily(Base):
+  __tablename__ = "safety_meeting_daily"
+
+  entry_date = Column(Date, primary_key=True, index=True)
+  created_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
+
+
 class Diet(Base):
   __tablename__ = "diet"
 

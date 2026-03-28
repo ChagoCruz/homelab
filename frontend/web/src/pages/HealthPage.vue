@@ -12,7 +12,7 @@
           <input class="input" type="date" v-model="selectedDate" @change="loadAll(true)" />
         </div>
 
-        <button class="btn" :disabled="isSaving" @click="saveAll">
+        <button class="btn" :disabled="isSaving || isSafetySaving" @click="saveAll">
           {{ isSaving ? "SAVING..." : "SAVE ALL" }}
         </button>
 
@@ -40,7 +40,7 @@
             <input class="input" type="number" step="0.1" v-model="weightValue" placeholder="e.g. 252.4" />
           </div>
 
-          <button class="btn small" :disabled="isSaving" @click="saveAll">SAVE</button>
+          <button class="btn small" :disabled="isSaving || isSafetySaving" @click="saveAll">SAVE</button>
         </div>
       </div>
 
@@ -62,7 +62,26 @@
             <input class="input" type="number" v-model="bpDiastolic" placeholder="e.g. 78" />
           </div>
 
-          <button class="btn small" :disabled="isSaving" @click="saveAll">SAVE</button>
+          <button class="btn small" :disabled="isSaving || isSafetySaving" @click="saveAll">SAVE</button>
+        </div>
+      </div>
+
+      <!-- SAFETY MEETING -->
+      <div class="panel wide">
+        <div class="panelHeader">
+          <div class="panelTitle">SAFETY MEETING</div>
+          <div class="panelMeta">ONE TOGGLE / DAY</div>
+        </div>
+
+        <div class="row rowSafety">
+          <label class="toggleRowLabel">
+            <input class="toggleInput" type="checkbox" v-model="safetyMeetingCompleted" />
+            <span class="toggleText">SAFE TODAY</span>
+          </label>
+
+          <button class="btn small" :disabled="isSaving || isSafetySaving" @click="saveSafetyMeeting()">
+            {{ isSafetySaving ? "SAVING..." : "SAVE" }}
+          </button>
         </div>
       </div>
 
@@ -247,6 +266,7 @@ import { computed, onMounted, ref } from "vue";
 
 const isLoading = ref(false);
 const isSaving = ref(false);
+const isSafetySaving = ref(false);
 
 const status = ref("");
 const statusType = ref("ok"); // ok | err
@@ -260,6 +280,7 @@ const weightValue = ref("");
 const bpId = ref(null);
 const bpSystolic = ref("");
 const bpDiastolic = ref("");
+const safetyMeetingCompleted = ref(false);
 
 // multi/day values
 const dietRows = ref([]);
@@ -350,6 +371,24 @@ async function loadDay() {
   }
 }
 
+async function loadSafetyMeeting() {
+  try {
+    const baseUrl = getBaseUrl();
+    const date = selectedDate.value;
+
+    const res = await fetch(`${baseUrl}/health/safety-meeting?date=${encodeURIComponent(date)}`);
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "");
+      throw new Error(msg || `HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    safetyMeetingCompleted.value = Boolean(data?.completed);
+  } catch (e) {
+    flash(`SAFETY LOAD ERROR: ${e.message}`, "err");
+  }
+}
+
 async function loadDashboard() {
   if (dashLoading.value) return;
   dashLoading.value = true;
@@ -376,6 +415,7 @@ async function loadDashboard() {
 
 async function loadAll() {
   await loadDay();
+  await loadSafetyMeeting();
   await loadDashboard();
 }
 
@@ -453,8 +493,41 @@ function cleanedWorkoutPayload() {
     .filter((r) => r.workout || r.calories_burnt !== null);
 }
 
+async function saveSafetyMeeting(options = {}) {
+  const { silentSuccess = false, throwOnError = false } = options;
+  if (isSafetySaving.value) return;
+  isSafetySaving.value = true;
+
+  try {
+    const baseUrl = getBaseUrl();
+    const date = selectedDate.value;
+
+    const res = await fetch(`${baseUrl}/health/safety-meeting?date=${encodeURIComponent(date)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ completed: Boolean(safetyMeetingCompleted.value) }),
+    });
+
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "");
+      throw new Error(msg || `HTTP ${res.status}`);
+    }
+
+    if (!silentSuccess) {
+      flash("SAFETY MEETING SAVED");
+    }
+  } catch (e) {
+    if (throwOnError) {
+      throw e;
+    }
+    flash(`SAFETY SAVE ERROR: ${e.message}`, "err");
+  } finally {
+    isSafetySaving.value = false;
+  }
+}
+
 async function saveAll() {
-  if (isSaving.value) return;
+  if (isSaving.value || isSafetySaving.value) return;
   isSaving.value = true;
   status.value = "";
 
@@ -496,6 +569,8 @@ async function saveAll() {
 
     dietRows.value = Array.isArray(updated?.diet) ? updated.diet.map(normalizeDietRow) : [];
     workoutRows.value = Array.isArray(updated?.workouts) ? updated.workouts.map(normalizeWorkoutRow) : [];
+
+    await saveSafetyMeeting({ silentSuccess: true, throwOnError: true });
 
     flash("SAVED");
     await loadDashboard();
@@ -566,6 +641,11 @@ onMounted(() => {
 .row { display: grid; gap: 12px; align-items: end; }
 .rowWeight { grid-template-columns: minmax(0, 1fr) auto; }
 .rowBP { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+.rowSafety { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+
+.toggleRowLabel { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; }
+.toggleInput { width: 18px; height: 18px; accent-color: rgba(255, 255, 255, 0.9); cursor: pointer; }
+.toggleText { letter-spacing: 0.1em; text-transform: uppercase; font-size: 13px; }
 
 .field { display: grid; gap: 6px; min-width: 0; }
 .field.inline { min-width: 220px; }

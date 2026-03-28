@@ -6,13 +6,14 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.db.session import SessionLocal
-from app.db.models import Weight, BloodPressure, Diet, Workout
+from app.db.models import Weight, BloodPressure, Diet, Workout, SafetyMeetingDaily
 from app.schemas.health_day import HealthDayOut, HealthDayUpsert
 from app.schemas.health_dashboard import HealthDashboardOut, HealthDaySummary, BloodPressurePoint
 from app.schemas.weight import WeightOut
 from app.schemas.blood_pressure import BloodPressureOut
 from app.schemas.diet import DietOut
 from app.schemas.workout import WorkoutOut
+from app.schemas.safety_meeting import SafetyMeetingDailyOut, SafetyMeetingDailyUpsert
 
 router = APIRouter(prefix="/health", tags=["Health"])
 
@@ -114,6 +115,26 @@ def upsert_day(date: date, payload: HealthDayUpsert, db: Session = Depends(get_d
 
   db.commit()
   return _get_day_snapshot(db, date)
+
+
+@router.get("/safety-meeting", response_model=SafetyMeetingDailyOut)
+def read_safety_meeting(date: date, db: Session = Depends(get_db)):
+  row = db.query(SafetyMeetingDaily).filter(SafetyMeetingDaily.entry_date == date).first()
+  return SafetyMeetingDailyOut(entry_date=date, completed=bool(row))
+
+
+@router.put("/safety-meeting", response_model=SafetyMeetingDailyOut)
+def upsert_safety_meeting(date: date, payload: SafetyMeetingDailyUpsert, db: Session = Depends(get_db)):
+  row = db.query(SafetyMeetingDaily).filter(SafetyMeetingDaily.entry_date == date).first()
+
+  if payload.completed:
+    if not row:
+      db.add(SafetyMeetingDaily(entry_date=date))
+  elif row:
+    db.delete(row)
+
+  db.commit()
+  return SafetyMeetingDailyOut(entry_date=date, completed=payload.completed)
 
 
 @router.delete("/diet/{diet_id}")
