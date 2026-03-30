@@ -98,11 +98,17 @@ const frame = Object.freeze({
   width: 980,
   height: 252,
   padLeft: 34,
-  padRight: 8,
-  padTop: 16,
+  padRight: 10,
+  padTop: 18,
   padBottom: 46,
 });
 const chartViewBox = `0 0 ${frame.width} ${frame.height}`;
+
+function normalizeMood(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.min(10, n));
+}
 
 function formatMoodTick(value) {
   return String(Math.round(value));
@@ -110,8 +116,8 @@ function formatMoodTick(value) {
 
 function resolveMoodFloor(rows) {
   const vals = rows
-    .map((row) => Number(row?.avg_mood_score))
-    .filter((value) => Number.isFinite(value));
+    .map((row) => normalizeMood(row?.avg_mood_score))
+    .filter((value) => value !== null);
 
   if (!vals.length) return 0;
   const minValue = Math.min(...vals);
@@ -119,10 +125,10 @@ function resolveMoodFloor(rows) {
 }
 
 const chart = computed(() =>
-  buildLineChart(props.rows, (row) => row?.avg_mood_score, {
+  buildLineChart(props.rows, (row) => normalizeMood(row?.avg_mood_score), {
     frame,
     fixedMin: resolveMoodFloor(props.rows),
-    fixedMax: 10,
+    fixedMax: 10.2,
     ySteps: 4,
     yFormatter: formatMoodTick,
     xMaxTicks: 7,

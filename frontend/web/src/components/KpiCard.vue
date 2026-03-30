@@ -10,7 +10,7 @@
       preserveAspectRatio="none"
       aria-hidden="true"
     >
-      <line class="spark-grid" x1="0" y1="22" x2="100" y2="22" />
+      <line class="spark-grid" x1="1" y1="22" x2="99" y2="22" />
       <path v-for="(segment, idx) in sparkSegments" :key="`spark-${idx}`" class="spark-line" :d="segment" />
       <circle v-if="lastPoint" class="spark-point" :cx="lastPoint.x" :cy="lastPoint.y" r="1.7" />
     </svg>
@@ -70,13 +70,19 @@ const points = computed(() => {
   const min = Math.min(...numeric);
   const max = Math.max(...numeric);
   const range = max - min || 1;
+  const leftPad = 2;
+  const rightPad = 98;
+  const topPad = 3;
+  const bottomPad = 20;
 
   return values.map((value, index) => {
-    const x = values.length <= 1 ? 50 : (index * 100) / (values.length - 1);
+    const x = values.length <= 1
+      ? (leftPad + rightPad) / 2
+      : leftPad + (index * (rightPad - leftPad)) / (values.length - 1);
     if (value === null) {
       return { index, value, x, y: null };
     }
-    const y = 2 + (1 - (value - min) / range) * 18;
+    const y = topPad + (1 - (value - min) / range) * (bottomPad - topPad);
     return { index, value, x, y };
   });
 });

@@ -161,6 +161,12 @@ function todayDate() {
   return toDateOnly(new Date());
 }
 
+function normalizeMood(value) {
+  const n = toFiniteNumber(value);
+  if (n === null) return null;
+  return Math.max(0, Math.min(10, n));
+}
+
 function formatTemp(value) {
   const n = Number(value);
   if (Number.isNaN(n)) return "--";
@@ -312,19 +318,23 @@ function setRange(days) {
 
 const featuredMeta = computed(() => `${selectedRangeDays.value}-day focus`);
 
-const latestMood = computed(() => findLastBy(dailyFacts.value, (row) => toFiniteNumber(row?.avg_mood_score) !== null));
-const previousMood = computed(() => findPrevBy(dailyFacts.value, (row) => toFiniteNumber(row?.avg_mood_score) !== null));
+const latestMood = computed(() => findLastBy(dailyFacts.value, (row) => normalizeMood(row?.avg_mood_score) !== null));
+const previousMood = computed(() => findPrevBy(dailyFacts.value, (row) => normalizeMood(row?.avg_mood_score) !== null));
 const moodValue = computed(() => {
-  const val = toFiniteNumber(latestMood.value?.avg_mood_score);
+  const val = normalizeMood(latestMood.value?.avg_mood_score);
   return val === null ? "--" : `${val.toFixed(1)} / 10`;
 });
 const moodTrend = computed(() => {
-  const latest = toFiniteNumber(latestMood.value?.avg_mood_score);
-  const prev = toFiniteNumber(previousMood.value?.avg_mood_score);
+  const latest = normalizeMood(latestMood.value?.avg_mood_score);
+  const prev = normalizeMood(previousMood.value?.avg_mood_score);
   if (latest === null || prev === null) return "not enough entries";
   return `${formatSignedDelta(latest - prev)} vs previous day`;
 });
-const moodSparkValues = computed(() => dailyFacts.value.map((row) => toFiniteNumber(row?.avg_mood_score)));
+const moodSparkValues = computed(() =>
+  dailyFacts.value
+    .map((row) => normalizeMood(row?.avg_mood_score))
+    .filter((value) => value !== null)
+);
 
 const latestCalories = computed(() => findLastBy(dailyFacts.value, (row) => toFiniteNumber(row?.total_calories) !== null));
 const previousCalories = computed(() => findPrevBy(dailyFacts.value, (row) => toFiniteNumber(row?.total_calories) !== null));
