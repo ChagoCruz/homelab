@@ -9,14 +9,14 @@
       <div class="actions">
         <div class="field inline">
           <label class="label">DATE</label>
-          <input class="input" type="date" v-model="selectedDate" @change="loadAll(true)" />
+          <input class="input" type="date" v-model="selectedDate" @change="loadAll" />
         </div>
 
         <button class="btn" :disabled="isSaving || isSafetySaving" @click="saveAll">
           {{ isSaving ? "SAVING..." : "SAVE ALL" }}
         </button>
 
-        <button class="btn ghost" :disabled="isLoading" @click="loadAll(true)">
+        <button class="btn ghost" :disabled="isLoading" @click="loadAll">
           {{ isLoading ? "LOADING..." : "REFRESH" }}
         </button>
       </div>
@@ -89,7 +89,7 @@
       <div class="panel wide">
         <div class="panelHeader">
           <div class="panelTitle">DIET LOG</div>
-          <div class="panelMeta">MULTIPLE ENTRIES / DAY</div>
+          <div class="panelMeta">{{ dietCaloriesMeta }}</div>
         </div>
 
         <div class="table dietTable">
@@ -142,7 +142,7 @@
       <div class="panel wide">
         <div class="panelHeader">
           <div class="panelTitle">WORKOUTS</div>
-          <div class="panelMeta">MULTIPLE ENTRIES / DAY</div>
+          <div class="panelMeta">{{ workoutCaloriesMeta }}</div>
         </div>
 
         <div class="table">
@@ -170,91 +170,32 @@
         </div>
       </div>
 
-      <!-- DASHBOARD -->
+      <!-- DETAILED ANALYTICS -->
       <div class="panel wide">
         <div class="panelHeader">
-          <div class="panelTitle">HEALTH DASHBOARD</div>
-          <div class="panelMeta">LAST {{ dashboardDays }} DAYS (ENDING {{ selectedDate }})</div>
+          <div class="panelTitle">DETAILED ANALYTICS</div>
+          <div class="panelMeta">{{ analyticsRangeLabel }}</div>
         </div>
 
-        <div v-if="dashLoading" class="empty">LOADING DASHBOARD...</div>
-        <div v-else>
-          <div class="dashGrid">
-            <!-- WEIGHT TREND -->
-            <div class="dashPanel">
-              <div class="dashTitle">WEIGHT TREND</div>
-              <div class="dashSub">7-DAY SERIES</div>
+        <div class="analyticsControls">
+          <span class="analyticsLabel">RANGE</span>
+          <button
+            v-for="days in [14, 21, 30]"
+            :key="`analytics-${days}`"
+            type="button"
+            class="btn ghost tiny"
+            :class="{ active: analyticsDays === days }"
+            :disabled="analyticsLoading"
+            @click="setAnalyticsDays(days)"
+          >
+            {{ days }}D
+          </button>
+        </div>
 
-              <div class="monoLine">
-                <span class="tag">SPARK</span>
-                <span class="spark">{{ weightSparkline }}</span>
-              </div>
-
-              <div class="dashTable">
-                <div class="dashHead">
-                  <div>DATE</div>
-                  <div>WEIGHT</div>
-                </div>
-                <div v-for="d in dashSeriesDesc" :key="d.date" class="dashRow">
-                  <div>{{ d.date }}</div>
-                  <div>{{ d.weight ?? "—" }}</div>
-                </div>
-              </div>
-            </div>
-
-            <!-- BP LAST 7 -->
-            <div class="dashPanel">
-              <div class="dashTitle">BLOOD PRESSURE</div>
-              <div class="dashSub">LAST 7 ENTRIES</div>
-
-              <div class="dashTable">
-                <div class="dashHead bpHead">
-                  <div>DATE</div>
-                  <div>BP</div>
-                </div>
-                <div v-if="bpLast7.length === 0" class="dashRow bpRow">
-                  <div>—</div>
-                  <div>NO DATA</div>
-                </div>
-                <div v-for="bp in bpLast7" :key="bp.date" class="dashRow bpRow">
-                  <div>{{ bp.date }}</div>
-                  <div>{{ bp.systolic }}/{{ bp.diastolic }}</div>
-                </div>
-              </div>
-            </div>
-
-            <!-- CALORIES -->
-            <div class="dashPanel wideDash">
-              <div class="dashTitle">CALORIES</div>
-              <div class="dashSub">IN / OUT / NET (IN - OUT)</div>
-
-              <div class="monoLine">
-                <span class="tag">TOTAL</span>
-                <span>IN {{ totalIn }} | OUT {{ totalOut }} | NET {{ totalNet }}</span>
-              </div>
-
-              <div class="dashTable caloriesTable">
-                <div class="dashHead calHead">
-                  <div>DATE</div>
-                  <div>IN</div>
-                  <div>OUT</div>
-                  <div>NET</div>
-                </div>
-                <div v-for="d in dashSeriesDesc" :key="d.date + '_cal'" class="dashRow calRow">
-                  <div>{{ d.date }}</div>
-                  <div>{{ d.calories_in }}</div>
-                  <div>{{ d.calories_out }}</div>
-                  <div :class="{ neg: d.calories_net < 0, pos: d.calories_net > 0 }">
-                    {{ d.calories_net }}
-                  </div>
-                </div>
-              </div>
-
-              <div class="hint">
-                EXAMPLE: IN 1000, OUT 300 → NET 700
-              </div>
-            </div>
-          </div>
+        <div class="analyticsStack">
+          <MoodOverlayChart :rows="analyticsFacts" :loading="analyticsLoading" :error="analyticsError" />
+          <CaloriesWorkoutChart :rows="analyticsFacts" :loading="analyticsLoading" :error="analyticsError" />
+          <MoodWeatherHeatmap :rows="analyticsFacts" :loading="analyticsLoading" :error="analyticsError" />
         </div>
       </div>
     </section>
@@ -263,6 +204,10 @@
 
 <script setup>
 import { computed, onMounted, ref } from "vue";
+import CaloriesWorkoutChart from "../components/CaloriesWorkoutChart.vue";
+import MoodOverlayChart from "../components/MoodOverlayChart.vue";
+import MoodWeatherHeatmap from "../components/MoodWeatherHeatmap.vue";
+import { shiftDate } from "../utils/chartUtils";
 
 const isLoading = ref(false);
 const isSaving = ref(false);
@@ -286,11 +231,11 @@ const safetyMeetingCompleted = ref(false);
 const dietRows = ref([]);
 const workoutRows = ref([]);
 
-// dashboard
-const dashLoading = ref(false);
-const dashboardDays = ref(7);
-const dashSeries = ref([]); // [{date, weight, calories_in/out/net, systolic/diastolic}]
-const bpLast7 = ref([]);    // [{date, systolic, diastolic}]
+// analytics
+const analyticsLoading = ref(false);
+const analyticsError = ref("");
+const analyticsDays = ref(21);
+const analyticsFacts = ref([]);
 
 function flash(msg, type = "ok") {
   status.value = msg;
@@ -313,6 +258,14 @@ function getLocalDateString() {
     String(d.getDate()).padStart(2, "0")
   );
 }
+
+const analyticsStartDate = computed(() =>
+  shiftDate(selectedDate.value, -(analyticsDays.value - 1))
+);
+
+const analyticsRangeLabel = computed(
+  () => `LAST ${analyticsDays.value} DAYS (${analyticsStartDate.value} → ${selectedDate.value})`
+);
 
 function mkKey() {
   return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -389,34 +342,43 @@ async function loadSafetyMeeting() {
   }
 }
 
-async function loadDashboard() {
-  if (dashLoading.value) return;
-  dashLoading.value = true;
+async function loadAnalytics() {
+  if (analyticsLoading.value) return;
+  analyticsLoading.value = true;
+  analyticsError.value = "";
 
   try {
     const baseUrl = getBaseUrl();
-    const end = selectedDate.value;
+    const url = new URL(`${baseUrl}/stats/daily-life-facts`);
+    url.searchParams.set("start_date", analyticsStartDate.value);
+    url.searchParams.set("end_date", selectedDate.value);
 
-    const res = await fetch(`${baseUrl}/health/dashboard?end_date=${encodeURIComponent(end)}&days=${dashboardDays.value}`);
+    const res = await fetch(url.toString());
     if (!res.ok) {
       const msg = await res.text().catch(() => "");
       throw new Error(msg || `HTTP ${res.status}`);
     }
 
-    const data = await res.json();
-    dashSeries.value = Array.isArray(data?.series) ? data.series : [];
-    bpLast7.value = Array.isArray(data?.bp_last_7) ? data.bp_last_7 : [];
+    const payload = await res.json();
+    analyticsFacts.value = Array.isArray(payload) ? payload : [];
   } catch (e) {
-    flash(`DASH ERROR: ${e.message}`, "err");
+    analyticsFacts.value = [];
+    analyticsError.value = `ANALYTICS ERROR: ${e.message}`;
   } finally {
-    dashLoading.value = false;
+    analyticsLoading.value = false;
   }
+}
+
+function setAnalyticsDays(days) {
+  if (analyticsLoading.value || analyticsDays.value === days) return;
+  analyticsDays.value = days;
+  loadAnalytics();
 }
 
 async function loadAll() {
   await loadDay();
   await loadSafetyMeeting();
-  await loadDashboard();
+  await loadAnalytics();
 }
 
 function addDiet() {
@@ -439,7 +401,7 @@ async function removeDiet(idx) {
       }
       dietRows.value.splice(idx, 1);
       flash("DIET ENTRY DELETED");
-      await loadDashboard();
+      await loadAnalytics();
       return;
     } catch (e) {
       flash(`DELETE ERROR: ${e.message}`, "err");
@@ -461,7 +423,7 @@ async function removeWorkout(idx) {
       }
       workoutRows.value.splice(idx, 1);
       flash("WORKOUT DELETED");
-      await loadDashboard();
+      await loadAnalytics();
       return;
     } catch (e) {
       flash(`DELETE ERROR: ${e.message}`, "err");
@@ -492,6 +454,23 @@ function cleanedWorkoutPayload() {
     }))
     .filter((r) => r.workout || r.calories_burnt !== null);
 }
+
+const dietTotalCalories = computed(() =>
+  dietRows.value.reduce((sum, row) => {
+    const value = Number(row?.calories);
+    return sum + (Number.isFinite(value) ? value : 0);
+  }, 0)
+);
+
+const workoutTotalCalories = computed(() =>
+  workoutRows.value.reduce((sum, row) => {
+    const value = Number(row?.calories_burnt);
+    return sum + (Number.isFinite(value) ? value : 0);
+  }, 0)
+);
+
+const dietCaloriesMeta = computed(() => `TOTAL CALORIES: ${Math.round(dietTotalCalories.value).toLocaleString()}`);
+const workoutCaloriesMeta = computed(() => `TOTAL CAL BURNT: ${Math.round(workoutTotalCalories.value).toLocaleString()}`);
 
 async function saveSafetyMeeting(options = {}) {
   const { silentSuccess = false, throwOnError = false } = options;
@@ -573,7 +552,7 @@ async function saveAll() {
     await saveSafetyMeeting({ silentSuccess: true, throwOnError: true });
 
     flash("SAVED");
-    await loadDashboard();
+    await loadAnalytics();
   } catch (e) {
     flash(`SAVE ERROR: ${e.message}`, "err");
   } finally {
@@ -581,43 +560,13 @@ async function saveAll() {
   }
 }
 
-/** Terminal sparkline for weights (7 chars-ish) */
-const weightSparkline = computed(() => {
-  const vals = dashSeries.value
-    .map((d) => (typeof d.weight === "number" ? d.weight : null))
-    .filter((v) => v !== null);
-
-  if (vals.length < 2) return "—";
-
-  const min = Math.min(...vals);
-  const max = Math.max(...vals);
-  const blocks = ["▁","▂","▃","▄","▅","▆","▇","█"];
-
-  return dashSeries.value
-    .map((d) => {
-      if (typeof d.weight !== "number") return "·";
-      if (max === min) return "▅";
-      const t = (d.weight - min) / (max - min);
-      const idx = Math.max(0, Math.min(blocks.length - 1, Math.round(t * (blocks.length - 1))));
-      return blocks[idx];
-    })
-    .join("");
-});
-
-const totalIn = computed(() => dashSeries.value.reduce((a, d) => a + (d.calories_in ?? 0), 0));
-const totalOut = computed(() => dashSeries.value.reduce((a, d) => a + (d.calories_out ?? 0), 0));
-const totalNet = computed(() => dashSeries.value.reduce((a, d) => a + (d.calories_net ?? 0), 0));
-const dashSeriesDesc = computed(() =>
-  [...dashSeries.value].sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")))
-);
-
 onMounted(() => {
-  loadAll(true);
+  loadAll();
 });
 </script>
 
 <style scoped>
-/* keep your existing styles (same as your current HealthPage.vue), plus dashboard styles below */
+/* base terminal styles + analytics layout */
 
 .screen { padding: var(--pad); position: relative; overflow: hidden; }
 .scanlines { pointer-events: none; position: absolute; inset: 0; background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.02), rgba(255,255,255,0.02) 1px, transparent 1px, transparent 3px); mix-blend-mode: overlay; opacity: 0.35; }
@@ -669,113 +618,34 @@ onMounted(() => {
 .empty { padding: 12px; border: 1px dashed var(--line2); border-radius: 10px; opacity: 0.8; letter-spacing: 0.1em; text-transform: uppercase; font-size: 12px; }
 .panelFooter { margin-top: 12px; display: flex; justify-content: flex-start; }
 
-/* DASHBOARD styles */
-.dashGrid {
-  display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(12, 1fr);
-}
-
-.dashPanel {
-  grid-column: span 6;
-  border: 1px solid var(--line2);
-  border-radius: 12px;
-  padding: 12px;
-  background: rgba(255,255,255,0.02);
-}
-
-.wideDash { grid-column: span 12; }
-
-.dashTitle {
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.dashSub {
-  margin-top: 4px;
-  font-size: 12px;
-  opacity: 0.75;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.monoLine {
-  margin-top: 10px;
-  padding: 10px;
-  border: 1px solid var(--line2);
-  border-radius: 10px;
+/* ANALYTICS styles */
+.analyticsControls {
   display: flex;
-  gap: 10px;
-  align-items: center;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-size: 12px;
-}
-
-.tag {
-  border: 1px solid var(--line2);
-  border-radius: 8px;
-  padding: 4px 8px;
-  opacity: 0.9;
-}
-
-.spark {
-  font-size: 16px;
-  letter-spacing: 2px;
-}
-
-.dashTable {
-  margin-top: 10px;
-  display: grid;
   gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
 }
 
-.dashHead {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid var(--line2);
-  border-radius: 10px;
-  opacity: 0.85;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  font-size: 12px;
-}
-
-.dashRow {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 10px;
-}
-
-.bpHead, .bpRow { grid-template-columns: 1fr 1fr; }
-
-.calHead {
-  grid-template-columns: 1fr 90px 90px 90px;
-}
-
-.calRow {
-  grid-template-columns: 1fr 90px 90px 90px;
-}
-
-.neg { opacity: 0.85; }
-.pos { opacity: 1; }
-
-.hint {
-  margin-top: 10px;
+.analyticsLabel {
   opacity: 0.75;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   font-size: 12px;
+}
+
+.btn.active {
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.analyticsStack {
+  display: grid;
+  gap: 12px;
 }
 
 @media (max-width: 980px) {
   .panel { grid-column: span 12; }
-  .dashPanel { grid-column: span 12; }
 }
 
 @media (max-width: 760px) {
@@ -806,18 +676,4 @@ onMounted(() => {
   }
 }
 
-@media (max-width: 430px) {
-  .calHead,
-  .calRow {
-    grid-template-columns: minmax(0, 1fr) minmax(44px, 52px) minmax(44px, 52px) minmax(44px, 52px);
-    gap: 6px;
-    padding: 8px;
-    font-size: 12px;
-  }
-
-  .calHead > div,
-  .calRow > div {
-    min-width: 0;
-  }
-}
 </style>

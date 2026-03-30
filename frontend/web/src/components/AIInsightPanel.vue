@@ -1,5 +1,5 @@
 <template>
-  <section class="panel-block ai-block">
+  <section class="panel-block ai-block" :class="{ compact }">
     <div class="block-header ai-header">
       <h2>ai insight</h2>
       <span class="ai-status">{{ loading ? "loading..." : "ready" }}</span>
@@ -13,7 +13,7 @@
       fetching latest insight...
     </div>
 
-    <div v-else-if="insight" class="insight-wrap">
+    <div v-else-if="insight" class="insight-wrap" :class="{ compact }">
       <div class="meta-row">
         <span>type: {{ insight.insight_type || insight.type || "weekly_report" }}</span>
         <span>
@@ -21,15 +21,23 @@
         </span>
       </div>
 
-      <pre class="insight-text">{{ insight.insight_text || insight.text }}</pre>
+      <p v-if="compact" class="compact-text">{{ compactSummary }}</p>
+      <pre v-else class="insight-text">{{ insight.insight_text || insight.text }}</pre>
     </div>
 
     <div v-else class="terminal-message">
       no insight generated yet.
     </div>
 
-    <div class="button-row">
-      <button class="terminal-button" :disabled="generating" @click="generateWeekly">
+    <div class="button-row" :class="{ compact }">
+      <RouterLink v-if="compact" to="/insights" class="terminal-link">view details</RouterLink>
+
+      <button
+        v-if="showGenerate"
+        class="terminal-button"
+        :disabled="generating"
+        @click="generateWeekly"
+      >
         {{ generating ? "generating..." : "generate weekly insight" }}
       </button>
     </div>
@@ -37,7 +45,19 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
+import { RouterLink } from "vue-router";
+
+defineProps({
+  compact: {
+    type: Boolean,
+    default: false,
+  },
+  showGenerate: {
+    type: Boolean,
+    default: true,
+  },
+});
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -45,6 +65,14 @@ const insight = ref(null);
 const loading = ref(false);
 const generating = ref(false);
 const error = ref("");
+
+const compactSummary = computed(() => {
+  const raw = (insight.value?.insight_text || insight.value?.text || "").replace(/\s+/g, " ").trim();
+  if (!raw) return "No summary available yet.";
+
+  const limit = 180;
+  return raw.length > limit ? `${raw.slice(0, limit).trimEnd()}...` : raw;
+});
 
 async function fetchLatestInsight() {
   loading.value = true;
@@ -108,6 +136,10 @@ onMounted(fetchLatestInsight);
   min-height: 260px;
 }
 
+.ai-block.compact {
+  min-height: 0;
+}
+
 .ai-header {
   display: flex;
   align-items: baseline;
@@ -137,6 +169,13 @@ onMounted(fetchLatestInsight);
   gap: 12px;
 }
 
+.compact-text {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 1.05rem;
+  line-height: 1.3;
+}
+
 .insight-text {
   margin: 0;
   white-space: pre-wrap;
@@ -160,25 +199,49 @@ onMounted(fetchLatestInsight);
   margin-top: 16px;
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
-.terminal-button {
+.button-row.compact {
+  margin-top: 10px;
+}
+
+.terminal-button,
+.terminal-link {
   background: transparent;
   color: var(--fg);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 10px 14px;
+  padding: 8px 12px;
   font: inherit;
   text-transform: lowercase;
+  text-decoration: none;
   cursor: pointer;
 }
 
-.terminal-button:hover:not(:disabled) {
+.terminal-button:hover:not(:disabled),
+.terminal-link:hover {
   background: rgba(255, 255, 255, 0.06);
 }
 
 .terminal-button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+@media (max-width: 430px) {
+  .meta-row {
+    font-size: 0.86rem;
+  }
+
+  .compact-text {
+    font-size: 0.92rem;
+  }
+
+  .terminal-button,
+  .terminal-link {
+    font-size: 0.86rem;
+    padding: 7px 10px;
+  }
 }
 </style>
