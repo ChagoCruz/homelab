@@ -25,7 +25,7 @@ from app.services.claude_service import (
 from app.services.ollama_service import generate_weekly_report
 
 router = APIRouter(prefix="/insights", tags=["insights"])
-WEEKLY_BEHAVIORAL_PROMPT_VERSION = "v7-weekly-prioritized-decision-analytics"
+WEEKLY_BEHAVIORAL_PROMPT_VERSION = "v10-weekly-prioritized-decision-analytics"
 
 class JournalWeeklyPeriodRequest(BaseModel):
     period_start: date | None = None
@@ -1979,8 +1979,8 @@ def _build_weekly_sections_with_fallback(
         risk_flags=risk_flags,
         recommendations=recommendations,
     )
-    key_insights = _merge_string_sections(llm_key_insights, fallback_key_insights, limit=4)
-    what_to_focus_on = _merge_string_sections(llm_what_to_focus_on, fallback_what_to_focus_on, limit=3)
+    key_insights = _merge_string_sections(fallback_key_insights, llm_key_insights, limit=4)
+    what_to_focus_on = _merge_string_sections(fallback_what_to_focus_on, llm_what_to_focus_on, limit=3)
 
     return {
         "system_state": system_state,

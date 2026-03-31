@@ -620,6 +620,139 @@ def _sorted_correlations_by_priority(
     )
 
 
+def _contains_any(text_value: str, keywords: list[str]) -> bool:
+    normalized = str(text_value or "").strip().lower()
+    return any(keyword in normalized for keyword in keywords)
+
+
+def _looks_like_state_or_risk(text_value: str) -> bool:
+    normalized = str(text_value or "").strip().lower()
+    if not normalized:
+        return False
+    if normalized.startswith(("primary lever:", "secondary lever:", "ignore for now:")):
+        return False
+
+    state_markers = [
+        "entries were",
+        "mood trended",
+        "average mood",
+        "appeared",
+        "recurring stressor",
+        "risk flag",
+        "confidence",
+        "delta",
+        "n=",
+        "high-stress",
+        "was unfavorable",
+    ]
+    return "%" in normalized or any(marker in normalized for marker in state_markers)
+
+
+def _action_from_context_text(context_text: str) -> str:
+    normalized = str(context_text or "").strip().lower()
+
+    # Prefer root-cause levers before symptom levers.
+    if _contains_any(normalized, ["fear of rejection", "rejection"]):
+        return "interrupt fear-of-rejection spirals by capping checking loops and forcing one concrete next step"
+
+    if _contains_any(normalized, ["uncertainty", "uncertain", "waiting", "unknown"]):
+        return "interrupt uncertainty spirals by turning waiting into one concrete action each day"
+
+    if _contains_any(normalized, ["high-calorie", "calorie", "calories", "spike"]):
+        return "stabilize daily calorie intake and reduce large day-to-day spikes"
+
+    if _contains_any(normalized, ["workout", "exercise"]):
+        return "protect at least three pre-scheduled workout slots this week"
+
+    if _contains_any(normalized, ["alcohol", "drink", "drinking"]):
+        return "set alcohol-free nights before priority mornings and track next-day mood/BP"
+
+    if _contains_any(normalized, ["weed", "cannabis", "safety_meeting"]):
+        return "plan no-weed evenings before priority mornings and compare next-day outcomes"
+
+    if _contains_any(normalized, ["stress", "overwhelm", "pressure", "burnout"]):
+        return "protect a 20-minute decompression block on high-pressure days"
+
+    return "run one concrete behavior experiment for 7 days and review outcomes at week end"
+
+
+def _action_from_correlation(item: dict[str, Any] | None) -> str:
+    if not isinstance(item, dict):
+        return ""
+    return _action_from_context_text(
+        " ".join(
+            [
+                _correlation_label(item),
+                str(item.get("interpretation") or ""),
+            ]
+        )
+    )
+
+
+def _action_from_recommendations(
+    recommendations: list[Any],
+    *,
+    exclude: set[str] | None = None,
+) -> str:
+    blocked = exclude or set()
+    for recommendation in recommendations:
+        sentence = _first_sentence(str(recommendation or ""))
+        if not sentence:
+            continue
+        normalized = sentence.lower()
+        if normalized in blocked:
+            continue
+
+        if _looks_like_state_or_risk(sentence):
+            converted = _action_from_context_text(sentence)
+            if converted and converted.lower() not in blocked:
+                return converted
+            continue
+
+        return sentence
+    return ""
+
+
+def _as_action_clause(action_text: str) -> str:
+    return str(action_text or "").strip().rstrip(".! ")
+
+
+def _root_cause_lever(top_drivers: list[dict[str, Any]], risk_flags: list[Any]) -> str:
+    context_parts: list[str] = []
+    for driver in top_drivers[:3]:
+        if not isinstance(driver, dict):
+            continue
+        context_parts.append(str(driver.get("driver") or ""))
+        context_parts.append(str(driver.get("evidence") or ""))
+    for risk in risk_flags[:3]:
+        context_parts.append(str(risk or ""))
+    context = " ".join(part for part in context_parts if part)
+    return _action_from_context_text(context)
+
+
+def _top_signal_implication(correlation: dict[str, Any] | None) -> str:
+    if not isinstance(correlation, dict):
+        return ""
+
+    interpretation = str(correlation.get("interpretation") or "").lower()
+    control_level = str(correlation.get("control_level") or "").lower()
+    confidence = str(correlation.get("confidence") or "").lower()
+
+    if control_level != "controllable":
+        return "This matters because your top signal was not fully controllable, so treat it as context rather than a primary action target."
+
+    if "less favorable" in interpretation or "unfavorable" in interpretation:
+        base = "This matters because the strongest downside pattern this week was behavioral and controllable, not random."
+    elif "more favorable" in interpretation:
+        base = "This matters because your best pattern this week came from a controllable behavior you can repeat."
+    else:
+        base = "This matters because the clearest pattern this week came from a controllable behavior."
+
+    if confidence == "low":
+        return f"{base} Treat it as directional evidence while sample size grows."
+    return base
+
+
 def _pick_strongest_by_control(
     correlation_items: list[dict[str, Any]],
     control_level: str,
@@ -653,7 +786,7 @@ def _build_key_insights(
 
     controllable_top = _pick_strongest_by_control(correlation_items, "controllable")
     if controllable_top:
-        corr_label = str(controllable_top.get("correlation") or "").strip()
+        corr_label = _correlation_label(controllable_top)
         corr_interp = re.sub(
             r"\s*Confidence\s*(?:is|:)\s*[^.]+\.?",
             "",
@@ -664,18 +797,21 @@ def _build_key_insights(
             _add(f"Top controllable driver: {corr_label}.")
         if corr_interp:
             _add(corr_interp)
+        implication = _top_signal_implication(controllable_top)
+        if implication:
+            _add(implication)
     elif top_drivers:
         driver = str(top_drivers[0].get("driver") or "").strip()
         if driver:
-            _add(f"Top lever this week appears to be: {driver}.")
+            _add(f"Top driver this week: {driver}.")
 
     _add(system_state)
 
     external_top = _pick_strongest_by_control(correlation_items, "uncontrollable")
     if external_top and str(external_top.get("confidence") or "").lower() in {"medium", "high"}:
-        external_label = str(external_top.get("correlation") or "").strip()
+        external_label = _correlation_label(external_top)
         if external_label:
-            _add(f"Notable external factor: {external_label} may have shaped outcomes, but it is not the main action lever.")
+            _add(f"External context: {external_label} may have contributed, but it is not the primary lever.")
 
     if risk_flags:
         _add(str(risk_flags[0]))
@@ -717,32 +853,63 @@ def _build_what_to_focus_on(
     primary = controllable_sorted[0] if controllable_sorted else None
     secondary = controllable_sorted[1] if len(controllable_sorted) > 1 else None
 
-    if primary:
-        label = str(primary.get("correlation") or "top controllable driver").strip()
-        if recommendations:
-            _add(f"Primary lever: {str(recommendations[0])} (linked to {label}).")
-        else:
-            _add(f"Primary lever: Act on {label} first.")
+    primary_action = _action_from_correlation(primary)
+    if not primary_action:
+        primary_action = _root_cause_lever(top_drivers, risk_flags)
+    if not primary_action:
+        primary_action = _action_from_recommendations(recommendations)
+    primary_clause = _as_action_clause(primary_action)
 
+    if primary:
+        label = _correlation_label(primary) or "top controllable driver"
+        _add(f"Primary lever: {primary_clause} (targets {label}).")
+    elif primary_clause:
+        _add(f"Primary lever: {primary_clause}.")
+
+    secondary_action = ""
     if secondary:
-        label = str(secondary.get("correlation") or "secondary controllable driver").strip()
-        _add(f"Secondary lever: Use {label} as your backup focus after the primary lever.")
-    elif risk_flags:
-        _add(f"Secondary lever: Reduce this recurring risk first: {str(risk_flags[0])}")
-    elif len(recommendations) > 1:
-        _add(f"Secondary lever: {str(recommendations[1])}")
+        secondary_action = _action_from_correlation(secondary)
+    if not secondary_action:
+        secondary_action = _root_cause_lever(top_drivers, risk_flags)
+    if not secondary_action:
+        secondary_action = _action_from_recommendations(
+            recommendations[1:],
+            exclude={str(primary_action or "").lower()},
+        )
+    secondary_clause = _as_action_clause(secondary_action)
+    if primary_clause and secondary_clause and secondary_clause.lower() == primary_clause.lower():
+        alt_secondary = _as_action_clause(_root_cause_lever(top_drivers, risk_flags))
+        if alt_secondary and alt_secondary.lower() != primary_clause.lower():
+            secondary_clause = alt_secondary
+        else:
+            alt_secondary = _as_action_clause(
+                _action_from_recommendations(
+                    recommendations[1:],
+                    exclude={primary_clause.lower()},
+                )
+            )
+            if alt_secondary and alt_secondary.lower() != primary_clause.lower():
+                secondary_clause = alt_secondary
+            else:
+                stress_context = " ".join(str(item or "") for item in risk_flags[:3])
+                alt_secondary = _as_action_clause(_action_from_context_text(stress_context))
+                if alt_secondary and alt_secondary.lower() != primary_clause.lower():
+                    secondary_clause = alt_secondary
+
+    if secondary_clause:
+        _add(f"Secondary lever: {secondary_clause}.")
 
     external_top = _pick_strongest_by_control(correlation_items, "uncontrollable")
     if external_top:
-        external_label = str(external_top.get("correlation") or "").strip()
+        external_label = _correlation_label(external_top)
         if external_label:
-            _add(f"Ignore for now: Do not optimize around '{external_label}' first; track it as context.")
+            _add(f"Ignore for now: treat '{external_label}' as background context, not a behavior target.")
     else:
-        _add("Ignore for now: low-confidence or one-off signals that are not repeatable yet.")
+        _add("Ignore for now: one-off low-confidence signals that are not repeatable yet.")
 
     if not focus:
-        _add("Primary lever: make one small behavior change and evaluate it next week.")
-        _add("Secondary lever: keep journaling and health logs consistent.")
+        _add("Primary lever: choose one controllable behavior and run it consistently for 7 days.")
+        _add("Secondary lever: protect a short decompression block on high-pressure days.")
         _add("Ignore for now: weak signals until sample size improves.")
 
     return focus[:3]
