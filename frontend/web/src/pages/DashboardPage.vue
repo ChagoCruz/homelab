@@ -197,6 +197,19 @@ function todayDate() {
   return toDateOnly(new Date());
 }
 
+function currentWeekStartDate() {
+  const today = new Date(`${todayDate()}T00:00:00`);
+  if (Number.isNaN(today.getTime())) {
+    return todayDate();
+  }
+
+  // Monday-based week to match backend date_trunc('week') behavior.
+  const dayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, ...
+  const offsetToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  today.setDate(today.getDate() + offsetToMonday);
+  return toDateOnly(today);
+}
+
 function buildEmptyHealthSeries(endDate, days) {
   const startDate = shiftDate(endDate, -(days - 1));
 
@@ -391,12 +404,25 @@ const caloriesTrend = computed(() => {
 });
 
 const alcoholDaysValue = computed(() => {
-  const recent = dailyFacts.value.slice(-7);
-  const count = recent.filter((row) => Boolean(row?.had_alcohol)).length;
-  return `${count} / ${recent.length || 7}`;
+  const weekStart = currentWeekStartDate();
+  const today = todayDate();
+
+  const count = dailyFacts.value.filter((row) => {
+    const day = String(row?.day ?? row?.date ?? "");
+    return day >= weekStart && day <= today && Boolean(row?.had_alcohol);
+  }).length;
+
+  return `${count} / 7`;
 });
 const alcoholDaysTrend = computed(() => {
-  const count = dailyFacts.value.slice(-7).filter((row) => Boolean(row?.had_alcohol)).length;
+  const weekStart = currentWeekStartDate();
+  const today = todayDate();
+
+  const count = dailyFacts.value.filter((row) => {
+    const day = String(row?.day ?? row?.date ?? "");
+    return day >= weekStart && day <= today && Boolean(row?.had_alcohol);
+  }).length;
+
   if (count === 0) return "clean week";
   if (count <= 2) return "low frequency";
   return "watch this trend";
