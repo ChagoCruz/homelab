@@ -15,6 +15,8 @@ from app.db.session import get_db
 from app.db.models import Journal, JournalEntryAnalysis, JournalPatternProfile
 from app.schemas.journal_ai import JournalPatternProfileOut
 from app.services.claude_service import (
+    _build_key_insights,
+    _build_what_to_focus_on,
     build_journal_pattern_profile,
     build_journal_period_summary,
     build_weekly_behavioral_insight,
@@ -23,7 +25,7 @@ from app.services.claude_service import (
 from app.services.ollama_service import generate_weekly_report
 
 router = APIRouter(prefix="/insights", tags=["insights"])
-WEEKLY_BEHAVIORAL_PROMPT_VERSION = "v3-weekly-unified-analytics"
+WEEKLY_BEHAVIORAL_PROMPT_VERSION = "v7-weekly-prioritized-decision-analytics"
 
 class JournalWeeklyPeriodRequest(BaseModel):
     period_start: date | None = None
@@ -408,6 +410,30 @@ def _confidence_weight(label: str) -> float:
     return {"low": 0.2, "medium": 0.65, "high": 1.0}.get(label, 0.2)
 
 
+def _control_level_from_context(category: str, key: str) -> str:
+    normalized_category = str(category or "").lower()
+    normalized_key = str(key or "").lower()
+
+    if normalized_category.startswith("weather_"):
+        return "uncontrollable"
+
+    if any(token in normalized_key for token in ["sleep", "routine"]):
+        return "semi_controllable"
+
+    if normalized_category.startswith("behavior_") or normalized_category.startswith("substance_"):
+        return "controllable"
+
+    return "semi_controllable"
+
+
+def _control_level_weight(control_level: str) -> float:
+    if control_level == "controllable":
+        return 0.5
+    if control_level == "semi_controllable":
+        return 0.25
+    return 0.0
+
+
 def _strength_from_effect(effect: float) -> str:
     if effect >= 0.6:
         return "strong"
@@ -500,6 +526,8 @@ def compare_groups(
     confidence_rank = _confidence_rank(confidence)
     direction = _direction_from_delta(delta, metric_family)
     strength = _strength_from_effect(effect)
+    control_level = _control_level_from_context(category=category, key=key)
+    control_weight = _control_level_weight(control_level)
 
     # Ranking heavily prioritizes confidence tier, then confidence/effect blend, then sample balance.
     sample_balance = min_group / max_group
@@ -508,6 +536,7 @@ def compare_groups(
         confidence_weight * ((0.65 * effect) + (0.35 * confidence_score)) * (0.75 + (0.25 * sample_balance)),
         3,
     )
+    importance_score = round((confidence_score * abs(delta)) + control_weight, 3)
 
     if metric_family == "mood":
         metric_label = "mood"
@@ -542,6 +571,7 @@ def compare_groups(
         "delta": delta,
         "direction": direction,
         "strength": strength,
+        "control_level": control_level,
         "sample_size": {
             "group_a": len(group_a_values),
             "group_b": len(group_b_values),
@@ -557,6 +587,7 @@ def compare_groups(
         },
         "interpretation": interpretation,
         "ranking_score": ranking_score,
+        "importance_score": importance_score,
         "min_group_size": min_group,
         "total_sample_size": total_group,
     }
@@ -888,6 +919,7 @@ def compute_unified_correlations(daily_rows: list[dict[str, Any]]) -> dict[str, 
         correlations,
         key=lambda item: (
             int(item.get("confidence_rank") or 0),
+            _coerce_float(item.get("importance_score")) or 0.0,
             _coerce_float(item.get("ranking_score")) or 0.0,
             int(item.get("min_group_size") or 0),
             int(item.get("total_sample_size") or 0),
@@ -1182,6 +1214,8 @@ def _sanitize_correlations(items: Any) -> list[dict[str, Any]]:
             interpretation = "Structured signal is present."
         confidence = str(item.get("confidence") or "").strip().lower()
         confidence_score = _coerce_float(item.get("confidence_score"))
+        control_level = str(item.get("control_level") or "").strip().lower()
+        importance_score = _coerce_float(item.get("importance_score"))
         sample_size = item.get("sample_size") if isinstance(item.get("sample_size"), dict) else {}
         normalized.append(
             {
@@ -1190,6 +1224,12 @@ def _sanitize_correlations(items: Any) -> list[dict[str, Any]]:
                 "interpretation": interpretation,
                 **({"confidence": confidence} if confidence in {"low", "medium", "high"} else {}),
                 **({"confidence_score": confidence_score} if confidence_score is not None else {}),
+                **(
+                    {"control_level": control_level}
+                    if control_level in {"controllable", "semi_controllable", "uncontrollable"}
+                    else {}
+                ),
+                **({"importance_score": importance_score} if importance_score is not None else {}),
                 **(
                     {
                         "sample_size": {
@@ -1253,6 +1293,87 @@ def _merge_string_sections(primary: list[str], fallback: list[str], limit: int) 
     return merged
 
 
+def _prioritized_correlation_candidates(
+    unified_correlations: dict[str, Any],
+    limit: int = 2,
+) -> list[dict[str, Any]]:
+    all_correlations = [
+        item
+        for item in (unified_correlations.get("all_correlations") or [])
+        if isinstance(item, dict)
+    ]
+    if not all_correlations:
+        return []
+
+    reliable = [
+        item
+        for item in all_correlations
+        if str(item.get("confidence") or "").lower() in {"medium", "high"}
+    ]
+    controllable_reliable = [
+        item
+        for item in reliable
+        if str(item.get("control_level") or "").lower() == "controllable"
+    ]
+    semi_reliable = [
+        item
+        for item in reliable
+        if str(item.get("control_level") or "").lower() == "semi_controllable"
+    ]
+    uncontrollable_reliable = [
+        item
+        for item in reliable
+        if str(item.get("control_level") or "").lower() == "uncontrollable"
+    ]
+    controllable_any = [
+        item
+        for item in all_correlations
+        if str(item.get("control_level") or "").lower() == "controllable"
+    ]
+
+    selected: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+
+    def _add_batch(items: list[dict[str, Any]]):
+        for item in items:
+            key = str(item.get("key") or "")
+            if key and key in seen_keys:
+                continue
+            if key:
+                seen_keys.add(key)
+            selected.append(item)
+            if len(selected) >= limit:
+                break
+
+    _add_batch(controllable_reliable)
+    if len(selected) < limit:
+        _add_batch(semi_reliable)
+    # External factors should stay secondary and only appear when controllable/semi signals are sparse.
+    if len(selected) < limit and not selected:
+        _add_batch(uncontrollable_reliable)
+    if len(selected) < limit:
+        _add_batch(controllable_any)
+    if len(selected) < limit:
+        _add_batch(all_correlations)
+
+    return selected[:limit]
+
+
+def _primary_correlation_for_system_state(unified_correlations: dict[str, Any]) -> dict[str, Any] | None:
+    prioritized = _prioritized_correlation_candidates(unified_correlations, limit=1)
+    if prioritized:
+        return prioritized[0]
+
+    all_correlations = [
+        item
+        for item in (unified_correlations.get("all_correlations") or [])
+        if isinstance(item, dict)
+    ]
+    if not all_correlations:
+        return None
+    return all_correlations[0]
+
+
 def _correlation_lookup(unified_correlations: dict[str, Any]) -> dict[str, dict[str, Any]]:
     lookup: dict[str, dict[str, Any]] = {}
     for item in (unified_correlations.get("all_correlations") or []):
@@ -1295,6 +1416,9 @@ def _enrich_correlation_sections(
         confidence_score = _coerce_float(item.get("confidence_score"))
         if confidence_score is None:
             confidence_score = _coerce_float(match.get("confidence_score"))
+        importance_score = _coerce_float(item.get("importance_score"))
+        if importance_score is None:
+            importance_score = _coerce_float(match.get("importance_score"))
 
         interpretation = _clean_interpretation_text(str(item.get("interpretation") or "").strip())
         if not interpretation:
@@ -1314,15 +1438,20 @@ def _enrich_correlation_sections(
         sample_size = raw_sample if isinstance(raw_sample, dict) else {}
         group_a_n = int(sample_size.get("group_a") or 0) if isinstance(sample_size, dict) else 0
         group_b_n = int(sample_size.get("group_b") or 0) if isinstance(sample_size, dict) else 0
+        control_level = str(item.get("control_level") or match.get("control_level") or "semi_controllable").lower()
+        if control_level not in {"controllable", "semi_controllable", "uncontrollable"}:
+            control_level = "semi_controllable"
 
         enriched.append(
             {
                 "correlation": label,
                 "strength": strength,
                 "confidence": confidence,
+                "control_level": control_level,
                 "sample_size": {"group_a": group_a_n, "group_b": group_b_n},
                 "interpretation": interpretation,
                 **({"confidence_score": confidence_score} if confidence_score is not None else {}),
+                **({"importance_score": importance_score} if importance_score is not None else {}),
             }
         )
         if len(enriched) >= limit:
@@ -1398,17 +1527,7 @@ def _fallback_top_drivers(
 ) -> list[dict[str, str]]:
     drivers: list[dict[str, str]] = []
 
-    all_correlations = [
-        item
-        for item in (unified_correlations.get("all_correlations") or [])
-        if isinstance(item, dict)
-    ]
-    reliable_correlations = [
-        item
-        for item in all_correlations
-        if str(item.get("confidence") or "").lower() in {"medium", "high"}
-    ]
-    selected_correlations = reliable_correlations[:2] if reliable_correlations else all_correlations[:2]
+    selected_correlations = _prioritized_correlation_candidates(unified_correlations, limit=2)
 
     for correlation in selected_correlations:
         if not isinstance(correlation, dict):
@@ -1491,7 +1610,7 @@ def _fallback_top_drivers(
 
 def _fallback_correlation_sections(unified_correlations: dict[str, Any]) -> list[dict[str, Any]]:
     fallback: list[dict[str, Any]] = []
-    for correlation in (unified_correlations.get("strongest_correlations") or [])[:2]:
+    for correlation in _prioritized_correlation_candidates(unified_correlations, limit=2):
         if not isinstance(correlation, dict):
             continue
         strength = str(correlation.get("strength") or "weak")
@@ -1518,6 +1637,8 @@ def _fallback_correlation_sections(unified_correlations: dict[str, Any]) -> list
                 "interpretation": interpretation,
                 "confidence": confidence if confidence in {"low", "medium", "high"} else "low",
                 "confidence_score": _coerce_float(correlation.get("confidence_score")) or 0.0,
+                "control_level": str(correlation.get("control_level") or "semi_controllable"),
+                "importance_score": _coerce_float(correlation.get("importance_score")) or 0.0,
                 "sample_size": {
                     "group_a": int(sample_size.get("group_a") or 0) if isinstance(sample_size, dict) else 0,
                     "group_b": int(sample_size.get("group_b") or 0) if isinstance(sample_size, dict) else 0,
@@ -1630,6 +1751,7 @@ def _fallback_recommendations(
         item
         for item in all_correlations
         if str(item.get("confidence") or "").lower() in {"medium", "high"}
+        and str(item.get("control_level") or "").lower() == "controllable"
     ]
 
     for correlation in reliable_correlations[:8]:
@@ -1695,12 +1817,17 @@ def _fallback_recommendations(
                 )
 
     if len(recommendations) < 3 and reliable_correlations:
+        top_controllable_label = str(reliable_correlations[0].get("comparison") or "").strip()
         _add_recommendation(
-            "Use one weekly check-in to review the top 2 medium/high-confidence correlations before changing routines."
+            (
+                f"Run a 7-day experiment focused on '{top_controllable_label}' and review outcomes at week end."
+                if top_controllable_label
+                else "Run a 7-day experiment on your top controllable driver and review outcomes at week end."
+            )
         )
     if len(recommendations) < 3:
         _add_recommendation(
-            "Prioritize complete daily logging this week to raise correlation confidence and reduce noisy signals."
+            "Keep workout/calorie/alcohol/safety-meeting logs complete so controllable drivers stay decision-ready."
         )
 
     return recommendations[:3]
@@ -1768,17 +1895,17 @@ def _fallback_system_state(
     if not line_1:
         line_1 = "Unified analytics signal was strong enough to identify drivers and risks."
 
-    strongest = unified_correlations.get("strongest_correlations") or []
+    top = _primary_correlation_for_system_state(unified_correlations)
     line_2 = ""
-    if isinstance(strongest, list) and strongest:
-        top = strongest[0]
-        if isinstance(top, dict):
-            label = str(top.get("comparison") or top.get("correlation") or "").strip()
-            delta = _coerce_float(top.get("delta"))
-            confidence = str(top.get("confidence") or "").strip()
-            if label:
-                confidence_suffix = f", confidence {confidence}" if confidence else ""
-                line_2 = f"Strongest relationship: {label} (delta {_fmt_signed(delta)}{confidence_suffix})."
+    if isinstance(top, dict):
+        label = str(top.get("comparison") or top.get("correlation") or "").strip()
+        delta = _coerce_float(top.get("delta"))
+        confidence = str(top.get("confidence") or "").strip()
+        control_level = str(top.get("control_level") or "").strip().lower()
+        if label:
+            control_hint = f", {control_level}" if control_level in {"controllable", "semi_controllable", "uncontrollable"} else ""
+            confidence_suffix = f", confidence {confidence}" if confidence else ""
+            line_2 = f"Strongest relationship: {label} (delta {_fmt_signed(delta)}{confidence_suffix}{control_hint})."
 
     if line_2:
         return f"{line_1}. {line_2}"
@@ -1796,6 +1923,8 @@ def _build_weekly_sections_with_fallback(
     llm_patterns = _sanitize_string_list(llm_structured.get("patterns"))
     llm_risk_flags = _sanitize_string_list(llm_structured.get("risk_flags"))
     llm_recommendations = _sanitize_string_list(llm_structured.get("recommendations"))
+    llm_key_insights = _sanitize_string_list(llm_structured.get("key_insights"))
+    llm_what_to_focus_on = _sanitize_string_list(llm_structured.get("what_to_focus_on"))
     llm_system_state = str(llm_structured.get("system_state") or "").strip()
 
     fallback_top_drivers = _fallback_top_drivers(aggregated_journal_analysis, weekly_behavior_metrics, unified_correlations)
@@ -1837,6 +1966,22 @@ def _build_weekly_sections_with_fallback(
     if not evidence_quality:
         evidence_quality = "usable" if usable_signal else "limited"
 
+    fallback_key_insights = _build_key_insights(
+        top_drivers=top_drivers,
+        correlation_items=correlations,
+        risk_flags=risk_flags,
+        recommendations=recommendations,
+        system_state=system_state,
+    )
+    fallback_what_to_focus_on = _build_what_to_focus_on(
+        top_drivers=top_drivers,
+        correlation_items=correlations,
+        risk_flags=risk_flags,
+        recommendations=recommendations,
+    )
+    key_insights = _merge_string_sections(llm_key_insights, fallback_key_insights, limit=4)
+    what_to_focus_on = _merge_string_sections(llm_what_to_focus_on, fallback_what_to_focus_on, limit=3)
+
     return {
         "system_state": system_state,
         "top_drivers": top_drivers,
@@ -1844,6 +1989,8 @@ def _build_weekly_sections_with_fallback(
         "patterns": patterns,
         "risk_flags": risk_flags,
         "recommendations": recommendations,
+        "key_insights": key_insights,
+        "what_to_focus_on": what_to_focus_on,
         "evidence_quality": evidence_quality,
     }
 
@@ -2331,6 +2478,8 @@ def create_weekly_journal_summary(
         "patterns": resolved_sections["patterns"],
         "risk_flags": resolved_sections["risk_flags"],
         "recommendations": resolved_sections["recommendations"],
+        "key_insights": resolved_sections.get("key_insights") or [],
+        "what_to_focus_on": resolved_sections.get("what_to_focus_on") or [],
         "evidence_quality": resolved_sections["evidence_quality"],
         "summary": resolved_sections["system_state"],
         "themes": [

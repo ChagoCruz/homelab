@@ -383,47 +383,66 @@ Rules:
 """.strip()
 
 WEEKLY_BEHAVIORAL_INSIGHT_SYSTEM_PROMPT = """
-You are a behavioral analytics engine.
+You are a behavioral analytics engine focused on decision-making.
+
+IMPORTANT:
+- Not all signals are equally important.
+- You MUST prioritize signals the user can control.
+- You MUST NOT present uncontrollable signals (like weather) as primary drivers unless no better signals exist.
 
 INPUT:
-- weekly_behavior_metrics: structured weekly metrics
-- aggregated_journal_analysis: aggregated outputs from individual journal-entry analyses
-- unified_correlations: computed cross-domain relationships with comparable scoring across:
-  - behavior -> mood
-  - behavior -> blood pressure
-  - weather -> mood
-  - weather -> blood pressure
-  - substance (safety_meeting) -> mood
-  - substance (safety_meeting) -> blood pressure
+- weekly_behavior_metrics
+- aggregated_journal_analysis
+- unified_correlations (includes confidence, direction, control_level, and sample size)
 
-TASK:
-1. Identify the top 3 drivers this week across mood and health where evidence is strongest.
-2. Identify the 2 strongest correlations using BOTH effect size and confidence.
-3. Detect recurring patterns or feedback loops
-4. Flag any risks or destabilizers
-5. Provide 3 specific actionable recommendations for next week
+CLASSIFY EACH SIGNAL:
+- controllable: calories, workouts, alcohol, safety_meeting
+- semi_controllable: stress patterns, routines
+- uncontrollable: weather
 
-CONSTRAINTS:
-- Use only structured data.
-- Do not retell events.
-- Do not summarize narrative.
-- Be concise.
-- Prefer patterns, drivers, and signal strength over interpretation.
-- If evidence is weak, say so.
-- Distinguish same-day effects from next-day effects.
-- Include weather and blood-pressure relationships when evidence is sufficient.
-- Include safety_meeting (weed/cannabis) relationships when evidence is sufficient.
-- Be cautious about reverse causality for substance-use and mood.
-- Do not overemphasize low-confidence signals.
+PRIORITIZATION RULES:
+- Always prioritize controllable signals first.
+- Only include uncontrollable signals as secondary insights.
+- Do NOT label uncontrollable signals as strongest relationship when controllable options exist.
+
+INTERPRETATION RULES:
+- Translate data into meaning first, then support with numbers.
+- Plain English first; avoid technical phrasing unless needed.
+- Distinguish actionable signals vs informational context.
+- Do not output generic advice.
+
+OUTPUT FORMAT (REQUIRED IN JSON FIELDS):
+- key_insights: 3–4 concise bullets in plain English. Must include:
+  - strongest controllable driver
+  - overall system state (stress/trend)
+  - optional external factor labeled as non-actionable
+- what_to_focus_on: exactly 3 bullets:
+  - Primary lever
+  - Secondary lever
+  - What to ignore for now
+- system_state
+- top_drivers (controllable first; uncontrollable only if necessary and clearly labeled)
+- correlations
+- patterns
+- risk_flags
+- recommendations (must map directly to controllable drivers; no weather-based recommendations)
 
 Return ONLY valid JSON with this structure:
 {
+  "key_insights": [],
+  "what_to_focus_on": [],
   "system_state": "",
   "top_drivers": [
     { "driver": "", "evidence": "" }
   ],
   "correlations": [
-    { "correlation": "", "strength": "weak", "interpretation": "" }
+    {
+      "correlation": "",
+      "strength": "weak",
+      "confidence": "low",
+      "control_level": "controllable",
+      "interpretation": ""
+    }
   ],
   "patterns": [],
   "risk_flags": [],
@@ -431,12 +450,17 @@ Return ONLY valid JSON with this structure:
   "evidence_quality": ""
 }
 
-Rules:
-- top_drivers: maximum 3 items.
-- correlations: maximum 2 items.
-- strength must be one of: weak, moderate, strong.
-- recommendations: exactly 3 concise actions when possible.
-- Prefer medium/high-confidence correlations in "correlations" unless all signals are low confidence.
+Allowed values:
+- strength: weak | moderate | strong
+- confidence: low | medium | high
+- control_level: controllable | semi_controllable | uncontrollable
+
+Limits:
+- top_drivers: max 3
+- correlations: max 2
+- recommendations: exactly 3 when possible
+- key_insights: 3 to 4
+- what_to_focus_on: exactly 3
 """.strip()
 
 
@@ -509,6 +533,221 @@ def build_weekly_behavioral_insight(
     return _extract_json(raw)
 
 
+def _first_sentence(text_value: str, max_chars: int = 220) -> str:
+    cleaned = " ".join(str(text_value or "").split())
+    if not cleaned:
+        return ""
+    parts = re.split(r"(?<=[.!?])\s+", cleaned, maxsplit=1)
+    sentence = parts[0].strip() if parts else cleaned
+    if len(sentence) <= max_chars:
+        return sentence
+    return sentence[: max_chars - 3].rstrip() + "..."
+
+
+def _correlation_label(item: dict[str, Any]) -> str:
+    return str(item.get("correlation") or item.get("comparison") or "").strip()
+
+
+def _correlation_confidence_rank(item: dict[str, Any]) -> int:
+    label = str(item.get("confidence") or "").strip().lower()
+    return {"low": 0, "medium": 1, "high": 2}.get(label, 0)
+
+
+def _correlation_strength_rank(item: dict[str, Any]) -> int:
+    label = str(item.get("strength") or "").strip().lower()
+    return {"weak": 0, "moderate": 1, "strong": 2}.get(label, 0)
+
+
+def _correlation_sample_floor(item: dict[str, Any]) -> int:
+    sample_size = item.get("sample_size") if isinstance(item.get("sample_size"), dict) else {}
+    group_a = int(sample_size.get("group_a") or 0) if sample_size else 0
+    group_b = int(sample_size.get("group_b") or 0) if sample_size else 0
+    return min(group_a, group_b)
+
+
+def _correlation_recommendation_relevance(item: dict[str, Any]) -> float:
+    label = _correlation_label(item).lower()
+    score = 0.0
+    if any(token in label for token in ["calorie", "workout", "alcohol", "weed", "safety_meeting", "cannabis"]):
+        score += 1.0
+    if "next-day" in label or "after" in label:
+        score += 0.2
+    return score
+
+
+def _correlation_outcome_priority(item: dict[str, Any]) -> int:
+    label = _correlation_label(item).lower()
+    if "mood" in label:
+        return 2
+    if any(token in label for token in ["blood pressure", "systolic", "diastolic", "bp"]):
+        return 1
+    return 0
+
+
+def _sorted_correlations_by_priority(
+    correlation_items: list[dict[str, Any]],
+    *,
+    control_level: str | None = None,
+) -> list[dict[str, Any]]:
+    candidates = [
+        item
+        for item in correlation_items
+        if isinstance(item, dict)
+        and (
+            control_level is None
+            or str(item.get("control_level") or "").lower() == control_level
+        )
+    ]
+    if not candidates:
+        return []
+
+    best_confidence_rank = max(_correlation_confidence_rank(item) for item in candidates)
+    confidence_tier = [
+        item for item in candidates if _correlation_confidence_rank(item) == best_confidence_rank
+    ]
+
+    return sorted(
+        confidence_tier,
+        key=lambda item: (
+            _correlation_recommendation_relevance(item),
+            _correlation_outcome_priority(item),
+            float(item.get("importance_score") or 0.0),
+            float(item.get("confidence_score") or 0.0),
+            _correlation_strength_rank(item),
+            _correlation_sample_floor(item),
+        ),
+        reverse=True,
+    )
+
+
+def _pick_strongest_by_control(
+    correlation_items: list[dict[str, Any]],
+    control_level: str,
+) -> dict[str, Any] | None:
+    candidates = _sorted_correlations_by_priority(correlation_items, control_level=control_level)
+    if not candidates:
+        return None
+    return candidates[0]
+
+
+def _build_key_insights(
+    *,
+    top_drivers: list[dict[str, Any]],
+    correlation_items: list[dict[str, Any]],
+    risk_flags: list[Any],
+    recommendations: list[Any],
+    system_state: str,
+) -> list[str]:
+    insights: list[str] = []
+    seen: set[str] = set()
+
+    def _add(item: str):
+        sentence = _first_sentence(item)
+        if not sentence:
+            return
+        key = sentence.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        insights.append(sentence)
+
+    controllable_top = _pick_strongest_by_control(correlation_items, "controllable")
+    if controllable_top:
+        corr_label = str(controllable_top.get("correlation") or "").strip()
+        corr_interp = re.sub(
+            r"\s*Confidence\s*(?:is|:)\s*[^.]+\.?",
+            "",
+            str(controllable_top.get("interpretation") or ""),
+            flags=re.IGNORECASE,
+        ).strip()
+        if corr_label:
+            _add(f"Top controllable driver: {corr_label}.")
+        if corr_interp:
+            _add(corr_interp)
+    elif top_drivers:
+        driver = str(top_drivers[0].get("driver") or "").strip()
+        if driver:
+            _add(f"Top lever this week appears to be: {driver}.")
+
+    _add(system_state)
+
+    external_top = _pick_strongest_by_control(correlation_items, "uncontrollable")
+    if external_top and str(external_top.get("confidence") or "").lower() in {"medium", "high"}:
+        external_label = str(external_top.get("correlation") or "").strip()
+        if external_label:
+            _add(f"Notable external factor: {external_label} may have shaped outcomes, but it is not the main action lever.")
+
+    if risk_flags:
+        _add(str(risk_flags[0]))
+
+    if recommendations:
+        _add(f"Most actionable next step right now: {str(recommendations[0])}")
+
+    if len(insights) < 3:
+        _add("Focus on the top two controllable behaviors first, then reassess next week.")
+
+    return insights[:4]
+
+
+def _build_what_to_focus_on(
+    *,
+    top_drivers: list[dict[str, Any]],
+    correlation_items: list[dict[str, Any]],
+    risk_flags: list[Any],
+    recommendations: list[Any],
+) -> list[str]:
+    focus: list[str] = []
+    seen: set[str] = set()
+
+    def _add(item: str):
+        sentence = _first_sentence(item)
+        if not sentence:
+            return
+        key = sentence.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        focus.append(sentence)
+
+    controllable_sorted = _sorted_correlations_by_priority(
+        correlation_items,
+        control_level="controllable",
+    )
+
+    primary = controllable_sorted[0] if controllable_sorted else None
+    secondary = controllable_sorted[1] if len(controllable_sorted) > 1 else None
+
+    if primary:
+        label = str(primary.get("correlation") or "top controllable driver").strip()
+        if recommendations:
+            _add(f"Primary lever: {str(recommendations[0])} (linked to {label}).")
+        else:
+            _add(f"Primary lever: Act on {label} first.")
+
+    if secondary:
+        label = str(secondary.get("correlation") or "secondary controllable driver").strip()
+        _add(f"Secondary lever: Use {label} as your backup focus after the primary lever.")
+    elif risk_flags:
+        _add(f"Secondary lever: Reduce this recurring risk first: {str(risk_flags[0])}")
+    elif len(recommendations) > 1:
+        _add(f"Secondary lever: {str(recommendations[1])}")
+
+    external_top = _pick_strongest_by_control(correlation_items, "uncontrollable")
+    if external_top:
+        external_label = str(external_top.get("correlation") or "").strip()
+        if external_label:
+            _add(f"Ignore for now: Do not optimize around '{external_label}' first; track it as context.")
+    else:
+        _add("Ignore for now: low-confidence or one-off signals that are not repeatable yet.")
+
+    if not focus:
+        _add("Primary lever: make one small behavior change and evaluate it next week.")
+        _add("Secondary lever: keep journaling and health logs consistent.")
+        _add("Ignore for now: weak signals until sample size improves.")
+
+    return focus[:3]
+
+
 def format_weekly_behavioral_insight(structured: dict[str, Any]) -> str:
     top_drivers = structured.get("top_drivers")
     if not isinstance(top_drivers, list):
@@ -547,14 +786,67 @@ def format_weekly_behavioral_insight(structured: dict[str, Any]) -> str:
             else "Signal is limited this week."
         )
 
-    lines = [
-        "[ SYSTEM_STATE ]",
-        system_state,
-        "",
-        "[ TOP_DRIVERS ]",
+    driver_items = [item for item in top_drivers[:3] if isinstance(item, dict)]
+    correlation_items = [item for item in correlations[:2] if isinstance(item, dict)]
+    llm_key_insights = [str(item).strip() for item in (structured.get("key_insights") or []) if str(item).strip()]
+    llm_what_to_focus_on = [
+        str(item).strip()
+        for item in (structured.get("what_to_focus_on") or [])
+        if str(item).strip()
     ]
 
-    driver_items = [item for item in top_drivers[:3] if isinstance(item, dict)]
+    if llm_key_insights:
+        key_insights = llm_key_insights[:4]
+    else:
+        key_insights = _build_key_insights(
+            top_drivers=driver_items,
+            correlation_items=correlation_items,
+            risk_flags=risk_flags,
+            recommendations=recommendations,
+            system_state=system_state,
+        )
+    if llm_what_to_focus_on:
+        what_to_focus_on = llm_what_to_focus_on[:3]
+    else:
+        what_to_focus_on = _build_what_to_focus_on(
+            top_drivers=driver_items,
+            correlation_items=correlation_items,
+            risk_flags=risk_flags,
+            recommendations=recommendations,
+        )
+
+    lines = [
+        "[ KEY_INSIGHTS ]",
+    ]
+
+    if key_insights:
+        for item in key_insights[:4]:
+            lines.append(f"* {item}")
+    else:
+        lines.append("* Key insights are limited this week due to weak signal.")
+
+    lines.extend(
+        [
+            "",
+            "[ WHAT_TO_FOCUS_ON ]",
+        ]
+    )
+    if what_to_focus_on:
+        for item in what_to_focus_on[:3]:
+            lines.append(f"* {item}")
+    else:
+        lines.append("* Focus on one controllable behavior and ignore weak/noisy signals for now.")
+
+    lines.extend(
+        [
+            "",
+            "[ SYSTEM_STATE ]",
+            system_state,
+            "",
+            "[ TOP_DRIVERS ]",
+        ]
+    )
+
     if driver_items:
         for item in driver_items:
             driver = str(item.get("driver") or "Insufficient signal")
@@ -567,7 +859,6 @@ def format_weekly_behavioral_insight(structured: dict[str, Any]) -> str:
 
     lines.append("")
     lines.append("[ CORRELATIONS ]")
-    correlation_items = [item for item in correlations[:2] if isinstance(item, dict)]
     if correlation_items:
         for item in correlation_items:
             correlation = str(item.get("correlation") or "Insufficient signal")
@@ -584,12 +875,15 @@ def format_weekly_behavioral_insight(structured: dict[str, Any]) -> str:
             group_b_n = int(sample_size.get("group_b") or 0) if sample_size else 0
             sample_suffix = f" (n={group_a_n} vs n={group_b_n})" if (group_a_n or group_b_n) else ""
             lines.append(f"* correlation: {correlation}")
+            lines.append(f"  interpretation: {interpretation}")
             lines.append(f"  strength: {strength}")
             if confidence:
                 lines.append(f"  confidence: {confidence}{sample_suffix}")
             elif sample_suffix:
                 lines.append(f"  sample_size: n={group_a_n} vs n={group_b_n}")
-            lines.append(f"  interpretation: {interpretation}")
+            control_level = str(item.get("control_level") or "").strip().lower()
+            if control_level in {"controllable", "semi_controllable", "uncontrollable"}:
+                lines.append(f"  control_level: {control_level}")
     else:
         lines.append("* correlation: Insufficient signal")
         lines.append("  strength: weak")

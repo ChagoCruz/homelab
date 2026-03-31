@@ -158,7 +158,14 @@
               <transition name="expand">
                 <div v-if="isProfileOpen(week.key)" class="profile-body">
                   <section
-                    v-if="week.summary && weeklySystemState(week)"
+                    v-if="week.summary && weeklyUsesInsightText(week) && weeklyRenderedInsightText(week)"
+                    class="profile-section"
+                  >
+                    <pre class="weekly-insight-text">{{ weeklyRenderedInsightText(week) }}</pre>
+                  </section>
+
+                  <section
+                    v-if="!weeklyUsesInsightText(week) && week.summary && weeklySystemState(week)"
                     class="profile-section"
                   >
                     <h3 class="stack-block-title">[ SYSTEM_STATE ]</h3>
@@ -166,7 +173,7 @@
                   </section>
 
                   <section
-                    v-if="weeklyTopDrivers(week).length"
+                    v-if="!weeklyUsesInsightText(week) && weeklyTopDrivers(week).length"
                     class="profile-section"
                   >
                     <h3 class="stack-block-title">[ TOP_DRIVERS ]</h3>
@@ -179,7 +186,7 @@
                   </section>
 
                   <section
-                    v-if="weeklyCorrelations(week).length"
+                    v-if="!weeklyUsesInsightText(week) && weeklyCorrelations(week).length"
                     class="profile-section"
                   >
                     <h3 class="stack-block-title">[ CORRELATIONS ]</h3>
@@ -195,7 +202,7 @@
                   </section>
 
                   <section
-                    v-if="weeklyPatterns(week).length"
+                    v-if="!weeklyUsesInsightText(week) && weeklyPatterns(week).length"
                     class="profile-section"
                   >
                     <h3 class="stack-block-title">[ PATTERNS ]</h3>
@@ -207,7 +214,7 @@
                   </section>
 
                   <section
-                    v-if="weeklyRiskFlags(week).length"
+                    v-if="!weeklyUsesInsightText(week) && weeklyRiskFlags(week).length"
                     class="profile-section"
                   >
                     <h3 class="stack-block-title">[ RISK_FLAGS ]</h3>
@@ -219,7 +226,7 @@
                   </section>
 
                   <section
-                    v-if="weeklyRecommendations(week).length"
+                    v-if="!weeklyUsesInsightText(week) && weeklyRecommendations(week).length"
                     class="profile-section"
                   >
                     <h3 class="stack-block-title">[ RECOMMENDATIONS ]</h3>
@@ -231,7 +238,7 @@
                   </section>
 
                   <section
-                    v-if="!weeklyHasBehavioralSections(week) && week.summary && weeklySummaryText(week)"
+                    v-if="!weeklyUsesInsightText(week) && !weeklyHasBehavioralSections(week) && week.summary && weeklySummaryText(week)"
                     class="profile-section"
                   >
                     <h3 class="stack-block-title">[ SUMMARY ]</h3>
@@ -239,7 +246,7 @@
                   </section>
 
                   <section
-                    v-if="!weeklyHasBehavioralSections(week) && weeklySummaryThemes(week).length"
+                    v-if="!weeklyUsesInsightText(week) && !weeklyHasBehavioralSections(week) && weeklySummaryThemes(week).length"
                     class="profile-section"
                   >
                     <h3 class="stack-block-title">[ THEMES ]</h3>
@@ -739,6 +746,29 @@ function weeklySystemState(week) {
   }
 
   return "";
+}
+
+const WEEKLY_REQUIRED_SECTION_HEADERS = [
+  "[ KEY_INSIGHTS ]",
+  "[ WHAT_TO_FOCUS_ON ]",
+  "[ SYSTEM_STATE ]",
+  "[ TOP_DRIVERS ]",
+  "[ CORRELATIONS ]",
+  "[ PATTERNS ]",
+  "[ RISK_FLAGS ]",
+  "[ RECOMMENDATIONS ]"
+];
+
+function weeklyRenderedInsightText(week) {
+  if (!week?.summary) return "";
+  return String(week.summary.insight_text ?? "").trim();
+}
+
+function weeklyUsesInsightText(week) {
+  const text = weeklyRenderedInsightText(week);
+  if (!text) return false;
+  const normalized = text.toUpperCase();
+  return WEEKLY_REQUIRED_SECTION_HEADERS.every((header) => normalized.includes(header));
 }
 
 function weeklySummaryText(week) {
@@ -1400,6 +1430,14 @@ onMounted(async () => {
 
 .profile-paragraph {
   margin: 0;
+  line-height: 1.5;
+}
+
+.weekly-insight-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
   line-height: 1.5;
 }
 
