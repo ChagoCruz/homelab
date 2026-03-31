@@ -4,6 +4,7 @@ from collections import Counter
 from datetime import date, timedelta
 from decimal import Decimal
 import json
+import math
 import re
 from typing import Any, Callable
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,6 +16,7 @@ from app.db.session import get_db
 from app.db.models import Journal, JournalEntryAnalysis, JournalPatternProfile
 from app.schemas.journal_ai import JournalPatternProfileOut
 from app.services.claude_service import (
+    _build_this_week_in_one_line,
     _build_key_insights,
     _build_what_to_focus_on,
     build_journal_pattern_profile,
@@ -25,7 +27,7 @@ from app.services.claude_service import (
 from app.services.ollama_service import generate_weekly_report
 
 router = APIRouter(prefix="/insights", tags=["insights"])
-WEEKLY_BEHAVIORAL_PROMPT_VERSION = "v10-weekly-prioritized-decision-analytics"
+WEEKLY_BEHAVIORAL_PROMPT_VERSION = "v12-weekly-prioritized-decision-analytics"
 
 class JournalWeeklyPeriodRequest(BaseModel):
     period_start: date | None = None
@@ -358,6 +360,62 @@ def _median(values: list[float]) -> float | None:
     if len(sorted_values) % 2 == 0:
         return (sorted_values[mid - 1] + sorted_values[mid]) / 2
     return sorted_values[mid]
+
+
+def _stddev(values: list[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    mean_value = sum(values) / len(values)
+    variance = sum((value - mean_value) ** 2 for value in values) / len(values)
+    return math.sqrt(max(variance, 0.0))
+
+
+def _clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
+
+
+def _score_0_100(value: float) -> int:
+    return int(round(_clamp(value, 0.0, 100.0)))
+
+
+def _score_from_cv(cv: float | None, ideal: float = 0.12, worst: float = 0.6) -> float:
+    if cv is None:
+        return 50.0
+    if cv <= ideal:
+        return 100.0
+    if cv >= worst:
+        return 25.0
+    return 100.0 - (((cv - ideal) / max(worst - ideal, 1e-6)) * 75.0)
+
+
+def _score_systolic(avg_systolic: float | None) -> float:
+    if avg_systolic is None:
+        return 50.0
+    if avg_systolic <= 120:
+        return 95.0
+    if avg_systolic <= 140:
+        return 95.0 - (((avg_systolic - 120.0) / 20.0) * 40.0)
+    if avg_systolic <= 160:
+        return 55.0 - (((avg_systolic - 140.0) / 20.0) * 30.0)
+    return 15.0
+
+
+def _score_diastolic(avg_diastolic: float | None) -> float:
+    if avg_diastolic is None:
+        return 50.0
+    if avg_diastolic <= 80:
+        return 95.0
+    if avg_diastolic <= 90:
+        return 95.0 - (((avg_diastolic - 80.0) / 10.0) * 25.0)
+    if avg_diastolic <= 100:
+        return 70.0 - (((avg_diastolic - 90.0) / 10.0) * 30.0)
+    return 15.0
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float | None:
+    if denominator <= 0:
+        return None
+    return numerator / denominator
 
 
 def _metric_higher_is_better(metric_family: str) -> bool:
@@ -979,6 +1037,211 @@ def compute_unified_correlations(daily_rows: list[dict[str, Any]]) -> dict[str, 
     }
 
 
+def _score_factor_from_components(
+    components: dict[str, int],
+    *,
+    positive: bool,
+) -> str:
+    if not components:
+        return ""
+
+    if positive:
+        component = max(components, key=lambda key: components.get(key, 0))
+        positive_map = {
+            "mood": "Mood baseline held relatively steady.",
+            "stress": "Stress load stayed comparatively manageable.",
+            "behavior": "Controllable behaviors were the strongest part of the week.",
+            "health": "Blood-pressure and health trends were comparatively stable.",
+            "consistency": "Daily routines stayed relatively consistent.",
+        }
+        return positive_map.get(component, "The most stable area this week was behavior-linked.")
+
+    component = min(components, key=lambda key: components.get(key, 0))
+    negative_map = {
+        "mood": "Mood regulation is the biggest drag right now.",
+        "stress": "Stress load was the biggest destabilizer this week.",
+        "behavior": "Behavior execution was the largest bottleneck this week.",
+        "health": "Health metrics were the weakest area this week.",
+        "consistency": "Routine inconsistency was the main drag this week.",
+    }
+    return negative_map.get(component, "The weakest area this week needs a tighter routine.")
+
+
+def _factor_from_correlations(
+    unified_correlations: dict[str, Any],
+    *,
+    direction: str,
+) -> str:
+    candidates = [
+        item
+        for item in (unified_correlations.get("all_correlations") or [])
+        if isinstance(item, dict)
+        and str(item.get("control_level") or "").lower() == "controllable"
+        and str(item.get("confidence") or "").lower() in {"medium", "high"}
+        and str(item.get("direction") or "").lower() == direction
+    ]
+    if not candidates:
+        return ""
+
+    def _confidence_rank(item: dict[str, Any]) -> int:
+        return {"low": 0, "medium": 1, "high": 2}.get(str(item.get("confidence") or "").lower(), 0)
+
+    top = sorted(
+        candidates,
+        key=lambda item: (
+            _confidence_rank(item),
+            abs(_coerce_float(item.get("delta")) or 0.0),
+            _coerce_float(item.get("confidence_score")) or 0.0,
+            _coerce_float(item.get("importance_score")) or 0.0,
+        ),
+        reverse=True,
+    )[0]
+    label = str(top.get("comparison") or top.get("correlation") or "").strip()
+    if not label:
+        return ""
+
+    if direction == "positive":
+        return f"{label} aligned with more favorable outcomes."
+    return f"{label} aligned with less favorable outcomes."
+
+
+def compute_weekly_scorecard(
+    *,
+    weekly_behavior_metrics: dict[str, Any],
+    aggregated_journal_analysis: dict[str, Any],
+    normalized_daily_rows: list[dict[str, Any]],
+    unified_correlations: dict[str, Any],
+    previous_week_score: float | None = None,
+) -> dict[str, Any]:
+    rows = [row for row in normalized_daily_rows if isinstance(row, dict)]
+    metrics = weekly_behavior_metrics.get("metrics") if isinstance(weekly_behavior_metrics, dict) else {}
+    metrics = metrics if isinstance(metrics, dict) else {}
+
+    expected_days = int(weekly_behavior_metrics.get("expected_days") or 0)
+    if expected_days <= 0:
+        expected_days = int(metrics.get("days_with_data") or 7)
+    if expected_days <= 0:
+        expected_days = 7
+
+    mood_values = [_coerce_float(row.get("mood_score")) for row in rows]
+    mood_values = [value for value in mood_values if value is not None]
+    systolic_values = [_coerce_float(row.get("systolic")) for row in rows]
+    systolic_values = [value for value in systolic_values if value is not None]
+    diastolic_values = [_coerce_float(row.get("diastolic")) for row in rows]
+    diastolic_values = [value for value in diastolic_values if value is not None]
+    calorie_values = [_coerce_float(row.get("calories")) for row in rows]
+    calorie_values = [value for value in calorie_values if value is not None and value > 0]
+
+    days_count = len(rows)
+    workout_days = sum(1 for row in rows if row.get("workout") is True)
+    alcohol_days = sum(1 for row in rows if row.get("alcohol") is True)
+    safety_meeting_days = sum(1 for row in rows if row.get("safety_meeting") is True)
+
+    avg_mood = _coerce_float(aggregated_journal_analysis.get("average_mood_score"))
+    if avg_mood is None and mood_values:
+        avg_mood = _mean(mood_values)
+    mood_trend = aggregated_journal_analysis.get("mood_trend") or {}
+    mood_delta = _coerce_float(mood_trend.get("delta")) if isinstance(mood_trend, dict) else None
+    mood_delta = mood_delta if mood_delta is not None else 0.0
+    mood_volatility = _stddev(mood_values)
+
+    mood_avg_sub = ((avg_mood + 5.0) / 10.0) * 100.0 if avg_mood is not None else 50.0
+    mood_trend_sub = 50.0 + (mood_delta * 12.0)
+    mood_volatility_sub = 100.0 - (min(mood_volatility / 3.0, 1.0) * 60.0)
+    mood_score = _score_0_100((0.55 * mood_avg_sub) + (0.25 * mood_trend_sub) + (0.2 * mood_volatility_sub))
+
+    stress_ratio = _coerce_float(aggregated_journal_analysis.get("high_stress_entry_ratio"))
+    if stress_ratio is None and mood_values:
+        stress_ratio = sum(1 for value in mood_values if value <= -2.0) / max(len(mood_values), 1)
+    stress_ratio = _clamp(stress_ratio if stress_ratio is not None else 0.5, 0.0, 1.0)
+    stress_base = (1.0 - stress_ratio) * 100.0
+    stress_score = _score_0_100(stress_base + (mood_delta * 6.0))
+
+    calorie_mean = _mean(calorie_values)
+    calorie_cv = None
+    if calorie_mean is not None and calorie_mean > 0 and len(calorie_values) >= 2:
+        calorie_cv = _stddev(calorie_values) / calorie_mean
+    calorie_consistency = _score_from_cv(calorie_cv)
+
+    workout_ratio = _safe_ratio(workout_days, days_count)
+    alcohol_ratio = _safe_ratio(alcohol_days, days_count)
+    safety_ratio = _safe_ratio(safety_meeting_days, days_count)
+
+    workout_score = (min((workout_ratio or 0.0) / 0.43, 1.0) * 100.0) if workout_ratio is not None else 50.0
+    alcohol_score = (1.0 - min((alcohol_ratio or 0.0) / 0.5, 1.0)) * 100.0 if alcohol_ratio is not None else 50.0
+    safety_score = (1.0 - min((safety_ratio or 0.0) / 0.6, 1.0)) * 100.0 if safety_ratio is not None else 50.0
+    behavior_score = _score_0_100(
+        (0.4 * calorie_consistency)
+        + (0.3 * workout_score)
+        + (0.15 * alcohol_score)
+        + (0.15 * safety_score)
+    )
+
+    avg_systolic = _mean(systolic_values)
+    avg_diastolic = _mean(diastolic_values)
+    systolic_score = _score_systolic(avg_systolic)
+    diastolic_score = _score_diastolic(avg_diastolic)
+    bp_stability = 100.0 - (
+        min((((_stddev(systolic_values) / 20.0) + (_stddev(diastolic_values) / 12.0)) / 2.0), 1.0) * 35.0
+    )
+    health_score = _score_0_100((0.45 * systolic_score) + (0.45 * diastolic_score) + (0.1 * bp_stability))
+
+    coverage_score = min((days_count / max(expected_days, 1)), 1.0) * 100.0
+
+    def _bool_change_score(values: list[bool]) -> float:
+        if len(values) < 2:
+            return 60.0
+        changes = sum(1 for idx in range(1, len(values)) if values[idx] != values[idx - 1])
+        return (1.0 - (changes / max(len(values) - 1, 1))) * 100.0
+
+    workout_series = [bool(row.get("workout")) for row in rows]
+    alcohol_series = [bool(row.get("alcohol")) for row in rows]
+    safety_series = [bool(row.get("safety_meeting")) for row in rows]
+    behavior_stability = _mean(
+        [
+            _bool_change_score(workout_series),
+            _bool_change_score(alcohol_series),
+            _bool_change_score(safety_series),
+        ]
+    ) or 60.0
+    consistency_score = _score_0_100(
+        (0.4 * coverage_score) + (0.35 * calorie_consistency) + (0.25 * behavior_stability)
+    )
+
+    components = {
+        "mood": mood_score,
+        "stress": stress_score,
+        "behavior": behavior_score,
+        "health": health_score,
+        "consistency": consistency_score,
+    }
+
+    weekly_score = _score_0_100(
+        (0.22 * mood_score)
+        + (0.18 * stress_score)
+        + (0.30 * behavior_score)
+        + (0.20 * health_score)
+        + (0.10 * consistency_score)
+    )
+    delta_from_last_week = int(round(weekly_score - previous_week_score)) if previous_week_score is not None else 0
+
+    biggest_positive_factor = _factor_from_correlations(unified_correlations, direction="positive")
+    if not biggest_positive_factor:
+        biggest_positive_factor = _score_factor_from_components(components, positive=True)
+
+    biggest_negative_factor = _factor_from_correlations(unified_correlations, direction="negative")
+    if not biggest_negative_factor:
+        biggest_negative_factor = _score_factor_from_components(components, positive=False)
+
+    return {
+        "weekly_score": weekly_score,
+        "components": components,
+        "delta_from_last_week": delta_from_last_week,
+        "biggest_positive_factor": biggest_positive_factor,
+        "biggest_negative_factor": biggest_negative_factor,
+    }
+
+
 def compute_behavior_correlations(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
     # Backward-compatible behavior-only projection from the unified engine.
     normalized_rows = daily_rows
@@ -1121,6 +1384,7 @@ def build_weekly_insight_payload(
     weekly_behavior_metrics: dict[str, Any],
     aggregated_journal_analysis: dict[str, Any],
     unified_correlations: dict[str, Any],
+    weekly_scorecard: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     behavior_correlations = {
         "candidate_count": len(unified_correlations.get("behavior_correlations") or []),
@@ -1128,13 +1392,62 @@ def build_weekly_insight_payload(
         "all_correlations": unified_correlations.get("behavior_correlations") or [],
         "evidence_quality": unified_correlations.get("evidence_quality") or "limited",
     }
-    return {
+    payload = {
         "weekly_behavior_metrics": weekly_behavior_metrics,
         "aggregated_journal_analysis": aggregated_journal_analysis,
         "unified_correlations": unified_correlations,
         # Backward-compatible alias for older prompt/consumers.
         "behavior_correlations": behavior_correlations,
     }
+    if isinstance(weekly_scorecard, dict):
+        payload["weekly_scorecard"] = weekly_scorecard
+    return payload
+
+
+def _structured_payload_dict(value: Any) -> dict[str, Any]:
+    payload = value
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return {}
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
+def _extract_weekly_scorecard(structured_output: Any) -> dict[str, Any] | None:
+    payload = _structured_payload_dict(structured_output)
+    scorecard = payload.get("weekly_scorecard")
+    if isinstance(scorecard, dict):
+        return scorecard
+    return None
+
+
+def _load_previous_week_score(db: Session, period_start: date) -> float | None:
+    row = db.execute(
+        text(
+            """
+            SELECT structured_output
+            FROM ai_insights
+            WHERE category = 'journal'
+              AND insight_type = 'journal_weekly_summary'
+              AND period_end < :period_start
+            ORDER BY period_end DESC, created_at DESC
+            LIMIT 1
+            """
+        ),
+        {"period_start": period_start},
+    ).fetchone()
+    if not row:
+        return None
+
+    scorecard = _extract_weekly_scorecard(row.structured_output)
+    if not isinstance(scorecard, dict):
+        return None
+
+    score = _coerce_float(scorecard.get("weekly_score"))
+    return score
 
 
 def _is_current_weekly_behavior_format(structured_output: Any) -> bool:
@@ -1305,31 +1618,38 @@ def _prioritized_correlation_candidates(
     if not all_correlations:
         return []
 
-    reliable = [
-        item
-        for item in all_correlations
-        if str(item.get("confidence") or "").lower() in {"medium", "high"}
-    ]
-    controllable_reliable = [
-        item
-        for item in reliable
-        if str(item.get("control_level") or "").lower() == "controllable"
-    ]
-    semi_reliable = [
-        item
-        for item in reliable
-        if str(item.get("control_level") or "").lower() == "semi_controllable"
-    ]
-    uncontrollable_reliable = [
-        item
-        for item in reliable
-        if str(item.get("control_level") or "").lower() == "uncontrollable"
-    ]
-    controllable_any = [
-        item
-        for item in all_correlations
-        if str(item.get("control_level") or "").lower() == "controllable"
-    ]
+    reliable = [item for item in all_correlations if str(item.get("confidence") or "").lower() in {"medium", "high"}]
+    pool = reliable if reliable else all_correlations
+
+    def _control_rank(item: dict[str, Any]) -> int:
+        level = str(item.get("control_level") or "").lower()
+        return {"controllable": 2, "semi_controllable": 1, "uncontrollable": 0}.get(level, 0)
+
+    def _outcome_rank(item: dict[str, Any]) -> int:
+        family = str(item.get("metric_family") or "").lower()
+        if family == "mood":
+            return 2
+        if family in {"systolic_bp", "diastolic_bp"}:
+            return 1
+        return 0
+
+    def _confidence_rank(item: dict[str, Any]) -> int:
+        return {"low": 0, "medium": 1, "high": 2}.get(str(item.get("confidence") or "").lower(), 0)
+
+    sorted_pool = sorted(
+        pool,
+        key=lambda item: (
+            _control_rank(item),
+            _outcome_rank(item),
+            _confidence_rank(item),
+            _coerce_float(item.get("confidence_score")) or 0.0,
+            _coerce_float(item.get("importance_score")) or 0.0,
+            _coerce_float(item.get("ranking_score")) or 0.0,
+            int(item.get("min_group_size") or 0),
+            int(item.get("total_sample_size") or 0),
+        ),
+        reverse=True,
+    )
 
     selected: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
@@ -1345,18 +1665,47 @@ def _prioritized_correlation_candidates(
             if len(selected) >= limit:
                 break
 
-    _add_batch(controllable_reliable)
-    if len(selected) < limit:
-        _add_batch(semi_reliable)
-    # External factors should stay secondary and only appear when controllable/semi signals are sparse.
-    if len(selected) < limit and not selected:
-        _add_batch(uncontrollable_reliable)
-    if len(selected) < limit:
-        _add_batch(controllable_any)
-    if len(selected) < limit:
-        _add_batch(all_correlations)
+    _add_batch(sorted_pool)
 
     return selected[:limit]
+
+
+def _has_medium_or_high_signal(unified_correlations: dict[str, Any]) -> bool:
+    for item in (unified_correlations.get("all_correlations") or []):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("confidence") or "").lower() in {"medium", "high"}:
+            return True
+    return False
+
+
+def _filter_low_confidence_correlations(
+    correlations: list[dict[str, Any]],
+    allow_low: bool,
+) -> list[dict[str, Any]]:
+    if allow_low:
+        return correlations[:2]
+    filtered = [
+        item
+        for item in correlations
+        if str(item.get("confidence") or "").lower() in {"medium", "high"}
+    ]
+    return filtered[:2]
+
+
+def _driver_mentions_low_confidence(driver: dict[str, Any]) -> bool:
+    evidence = str(driver.get("evidence") or "").strip().lower()
+    return "confidence low" in evidence or "confidence: low" in evidence
+
+
+def _filter_low_confidence_drivers(
+    drivers: list[dict[str, str]],
+    allow_low: bool,
+) -> list[dict[str, str]]:
+    if allow_low:
+        return drivers[:3]
+    filtered = [item for item in drivers if not _driver_mentions_low_confidence(item)]
+    return filtered[:3]
 
 
 def _primary_correlation_for_system_state(unified_correlations: dict[str, Any]) -> dict[str, Any] | None:
@@ -1923,6 +2272,7 @@ def _build_weekly_sections_with_fallback(
     llm_patterns = _sanitize_string_list(llm_structured.get("patterns"))
     llm_risk_flags = _sanitize_string_list(llm_structured.get("risk_flags"))
     llm_recommendations = _sanitize_string_list(llm_structured.get("recommendations"))
+    llm_this_week_in_one_line = str(llm_structured.get("this_week_in_one_line") or "").strip()
     llm_key_insights = _sanitize_string_list(llm_structured.get("key_insights"))
     llm_what_to_focus_on = _sanitize_string_list(llm_structured.get("what_to_focus_on"))
     llm_system_state = str(llm_structured.get("system_state") or "").strip()
@@ -1937,6 +2287,10 @@ def _build_weekly_sections_with_fallback(
     top_drivers = _merge_driver_sections(fallback_top_drivers, llm_top_drivers, limit=3)
     correlations = _merge_correlation_sections(fallback_correlations, llm_correlations, limit=2)
     correlations = _enrich_correlation_sections(correlations, unified_correlations, limit=2)
+    has_reliable = _has_medium_or_high_signal(unified_correlations)
+    allow_low = not has_reliable
+    correlations = _filter_low_confidence_correlations(correlations, allow_low=allow_low)
+    top_drivers = _filter_low_confidence_drivers(top_drivers, allow_low=allow_low)
     patterns = _merge_string_sections(llm_patterns, fallback_patterns, limit=4)
     risk_flags = _merge_string_sections(llm_risk_flags, fallback_risk_flags, limit=4)
     recommendations = _merge_string_sections(fallback_recommendations, llm_recommendations, limit=3)
@@ -1979,10 +2333,18 @@ def _build_weekly_sections_with_fallback(
         risk_flags=risk_flags,
         recommendations=recommendations,
     )
+    fallback_this_week_in_one_line = _build_this_week_in_one_line(
+        top_drivers=top_drivers,
+        correlation_items=correlations,
+        risk_flags=risk_flags,
+        recommendations=recommendations,
+    )
+    this_week_in_one_line = fallback_this_week_in_one_line or llm_this_week_in_one_line
     key_insights = _merge_string_sections(fallback_key_insights, llm_key_insights, limit=4)
     what_to_focus_on = _merge_string_sections(fallback_what_to_focus_on, llm_what_to_focus_on, limit=3)
 
     return {
+        "this_week_in_one_line": this_week_in_one_line,
         "system_state": system_state,
         "top_drivers": top_drivers,
         "correlations": correlations,
@@ -2433,6 +2795,7 @@ def create_weekly_journal_summary(
         and _is_current_weekly_behavior_format(existing.structured_output)
         and _has_populated_weekly_sections(existing.structured_output)
     ):
+        existing_scorecard = _extract_weekly_scorecard(existing.structured_output)
         return {
             "id": existing.id,
             "insight_type": existing.insight_type,
@@ -2440,6 +2803,7 @@ def create_weekly_journal_summary(
             "period_end": str(existing.period_end),
             "insight_text": existing.insight_text,
             "structured_output": existing.structured_output,
+            "weekly_scorecard": existing_scorecard,
             "created_at": existing.created_at,
             "entry_count": len(rows),
             "journal_ids": journal_ids,
@@ -2450,6 +2814,14 @@ def create_weekly_journal_summary(
     aggregated_journal_analysis = aggregate_weekly_journal_analysis(analyses)
     normalized_daily_rows = build_normalized_daily_rows(db, period_start, period_end)
     unified_correlations = compute_unified_correlations(normalized_daily_rows)
+    previous_week_score = _load_previous_week_score(db, period_start)
+    weekly_scorecard = compute_weekly_scorecard(
+        weekly_behavior_metrics=weekly_behavior_metrics,
+        aggregated_journal_analysis=aggregated_journal_analysis,
+        normalized_daily_rows=normalized_daily_rows,
+        unified_correlations=unified_correlations,
+        previous_week_score=previous_week_score,
+    )
     behavior_correlations = {
         "candidate_count": len(unified_correlations.get("behavior_correlations") or []),
         "strongest_correlations": (unified_correlations.get("behavior_correlations") or [])[:2],
@@ -2460,6 +2832,7 @@ def create_weekly_journal_summary(
         weekly_behavior_metrics=weekly_behavior_metrics,
         aggregated_journal_analysis=aggregated_journal_analysis,
         unified_correlations=unified_correlations,
+        weekly_scorecard=weekly_scorecard,
     )
 
     llm_structured = build_weekly_behavioral_insight(input_payload)
@@ -2472,6 +2845,7 @@ def create_weekly_journal_summary(
 
     # Keep "summary"/"themes" for frontend compatibility while storing richer structured sections.
     structured_output = {
+        "this_week_in_one_line": resolved_sections.get("this_week_in_one_line") or "",
         "system_state": resolved_sections["system_state"],
         "top_drivers": resolved_sections["top_drivers"],
         "correlations": resolved_sections["correlations"],
@@ -2490,6 +2864,7 @@ def create_weekly_journal_summary(
         "weekly_behavior_metrics": weekly_behavior_metrics,
         "aggregated_journal_analysis": aggregated_journal_analysis,
         "unified_correlations": unified_correlations,
+        "weekly_scorecard": weekly_scorecard,
         # Backward-compatible alias.
         "behavior_correlations": behavior_correlations,
     }
@@ -2579,6 +2954,7 @@ def create_weekly_journal_summary(
         "period_end": str(result.period_end),
         "insight_text": result.insight_text,
         "structured_output": result.structured_output,
+        "weekly_scorecard": weekly_scorecard,
         "created_at": result.created_at,
         "entry_count": len(rows),
         "journal_ids": journal_ids,
@@ -2717,7 +3093,12 @@ def get_weekly_journal_summaries(db: Session = Depends(get_db)):
         """)
     ).fetchall()
 
-    return [dict(row._mapping) for row in rows]
+    payload: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row._mapping)
+        item["weekly_scorecard"] = _extract_weekly_scorecard(item.get("structured_output"))
+        payload.append(item)
+    return payload
 
 
 @router.get("/journal/monthly-summary")

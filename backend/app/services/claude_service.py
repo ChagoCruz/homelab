@@ -412,6 +412,7 @@ INTERPRETATION RULES:
 - Do not output generic advice.
 
 OUTPUT FORMAT (REQUIRED IN JSON FIELDS):
+- this_week_in_one_line: exactly one sentence, plain English, no numbers, strongest controllable lever only
 - key_insights: 3–4 concise bullets in plain English. Must include:
   - strongest controllable driver
   - overall system state (stress/trend)
@@ -429,6 +430,7 @@ OUTPUT FORMAT (REQUIRED IN JSON FIELDS):
 
 Return ONLY valid JSON with this structure:
 {
+  "this_week_in_one_line": "",
   "key_insights": [],
   "what_to_focus_on": [],
   "system_state": "",
@@ -456,6 +458,7 @@ Allowed values:
 - control_level: controllable | semi_controllable | uncontrollable
 
 Limits:
+- this_week_in_one_line: exactly 1 sentence
 - top_drivers: max 3
 - correlations: max 2
 - recommendations: exactly 3 when possible
@@ -753,6 +756,83 @@ def _top_signal_implication(correlation: dict[str, Any] | None) -> str:
     return base
 
 
+def _plain_driver_takeaway(correlation: dict[str, Any] | None) -> str:
+    if not isinstance(correlation, dict):
+        return ""
+
+    label = _correlation_label(correlation).lower()
+    interpretation = str(correlation.get("interpretation") or "").lower()
+
+    if "mood" in label:
+        if "less favorable" in interpretation:
+            return "When this pattern appears, mood tends to move in the wrong direction."
+        if "more favorable" in interpretation:
+            return "When this pattern appears, mood tends to stay more stable."
+        return "This pattern appears to be directly linked to mood."
+
+    if _contains_any(label, ["blood pressure", "systolic", "diastolic", "bp"]):
+        if "less favorable" in interpretation:
+            return "This pattern is linked to less stable blood-pressure outcomes."
+        if "more favorable" in interpretation:
+            return "This pattern is linked to more stable blood-pressure outcomes."
+        return "This pattern appears to be linked to blood-pressure outcomes."
+
+    return "This signal appears to be behavior-linked and actionable."
+
+
+def _main_stress_driver_sentence(top_drivers: list[dict[str, Any]], risk_flags: list[Any]) -> str:
+    for driver in top_drivers:
+        if not isinstance(driver, dict):
+            continue
+        driver_label = str(driver.get("driver") or "").strip()
+        normalized = driver_label.lower()
+        if normalized.startswith("recurring stressor:"):
+            stressor = driver_label.split(":", 1)[1].strip() if ":" in driver_label else driver_label
+            if stressor:
+                return f"The main stress loop this week was '{stressor}', which likely amplified emotional load."
+
+    risk_blob = " ".join(str(item or "") for item in risk_flags)
+    if _contains_any(risk_blob, ["high-stress", "stress", "overwhelm", "pressure"]):
+        return "Stress stayed persistently elevated this week, so recovery capacity is still a central concern."
+
+    return ""
+
+
+def _build_this_week_in_one_line(
+    *,
+    top_drivers: list[dict[str, Any]],
+    correlation_items: list[dict[str, Any]],
+    risk_flags: list[Any],
+    recommendations: list[Any],
+) -> str:
+    top_controllable = _pick_strongest_by_control(correlation_items, "controllable")
+    label = _correlation_label(top_controllable).lower() if isinstance(top_controllable, dict) else ""
+
+    if "calorie" in label and "mood" in label:
+        return "Stabilizing your calorie intake is the clearest way to improve your mood right now."
+    if "workout" in label and "mood" in label:
+        return "Protecting consistent workouts is the clearest way to improve your mood right now."
+    if "alcohol" in label and "mood" in label:
+        return "Reducing alcohol before key days is the clearest way to protect your mood right now."
+    if _contains_any(label, ["weed", "cannabis", "safety_meeting"]) and "mood" in label:
+        return "Planning intentional no-weed evenings is the clearest way to support your mood right now."
+    if _contains_any(label, ["systolic", "diastolic", "blood pressure", "bp"]):
+        return "Your clearest controllable lever right now is tightening daily routines that support healthier blood pressure."
+
+    action = _as_action_clause(_action_from_correlation(top_controllable))
+    if not action:
+        action = _as_action_clause(_root_cause_lever(top_drivers, risk_flags))
+    if not action:
+        action = _as_action_clause(_action_from_recommendations(recommendations))
+    if not action:
+        action = "protect one consistent controllable behavior each day"
+
+    sentence = f"{action[:1].upper()}{action[1:]} is your clearest controllable lever this week."
+    if re.search(r"\d", sentence):
+        return "Focusing on one stable controllable routine is your clearest lever this week."
+    return sentence
+
+
 def _pick_strongest_by_control(
     correlation_items: list[dict[str, Any]],
     control_level: str,
@@ -787,16 +867,11 @@ def _build_key_insights(
     controllable_top = _pick_strongest_by_control(correlation_items, "controllable")
     if controllable_top:
         corr_label = _correlation_label(controllable_top)
-        corr_interp = re.sub(
-            r"\s*Confidence\s*(?:is|:)\s*[^.]+\.?",
-            "",
-            str(controllable_top.get("interpretation") or ""),
-            flags=re.IGNORECASE,
-        ).strip()
+        plain_takeaway = _plain_driver_takeaway(controllable_top)
         if corr_label:
-            _add(f"Top controllable driver: {corr_label}.")
-        if corr_interp:
-            _add(corr_interp)
+            _add(f"The clearest controllable signal this week was {corr_label}.")
+        if plain_takeaway:
+            _add(plain_takeaway)
         implication = _top_signal_implication(controllable_top)
         if implication:
             _add(implication)
@@ -804,6 +879,10 @@ def _build_key_insights(
         driver = str(top_drivers[0].get("driver") or "").strip()
         if driver:
             _add(f"Top driver this week: {driver}.")
+
+    stress_driver_line = _main_stress_driver_sentence(top_drivers, risk_flags)
+    if stress_driver_line:
+        _add(stress_driver_line)
 
     _add(system_state)
 
@@ -814,7 +893,9 @@ def _build_key_insights(
             _add(f"External context: {external_label} may have contributed, but it is not the primary lever.")
 
     if risk_flags:
-        _add(str(risk_flags[0]))
+        risk_sentence = str(risk_flags[0]).strip()
+        if risk_sentence and not _contains_any(risk_sentence, ["entries were", "delta", "n="]):
+            _add(risk_sentence)
 
     if recommendations:
         _add(f"Most actionable next step right now: {str(recommendations[0])}")
@@ -955,12 +1036,24 @@ def format_weekly_behavioral_insight(structured: dict[str, Any]) -> str:
 
     driver_items = [item for item in top_drivers[:3] if isinstance(item, dict)]
     correlation_items = [item for item in correlations[:2] if isinstance(item, dict)]
+    llm_one_line = str(structured.get("this_week_in_one_line") or "").strip()
     llm_key_insights = [str(item).strip() for item in (structured.get("key_insights") or []) if str(item).strip()]
     llm_what_to_focus_on = [
         str(item).strip()
         for item in (structured.get("what_to_focus_on") or [])
         if str(item).strip()
     ]
+
+    fallback_one_line = _build_this_week_in_one_line(
+        top_drivers=driver_items,
+        correlation_items=correlation_items,
+        risk_flags=risk_flags,
+        recommendations=recommendations,
+    )
+    if llm_one_line and not re.search(r"\d", llm_one_line):
+        this_week_in_one_line = _first_sentence(llm_one_line)
+    else:
+        this_week_in_one_line = fallback_one_line
 
     if llm_key_insights:
         key_insights = llm_key_insights[:4]
@@ -983,6 +1076,10 @@ def format_weekly_behavioral_insight(structured: dict[str, Any]) -> str:
         )
 
     lines = [
+        "[ THIS_WEEK_IN_ONE_LINE ]",
+        this_week_in_one_line
+        or "Focusing on one stable controllable routine is your clearest lever this week.",
+        "",
         "[ KEY_INSIGHTS ]",
     ]
 

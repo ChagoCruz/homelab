@@ -157,6 +157,37 @@
 
               <transition name="expand">
                 <div v-if="isProfileOpen(week.key)" class="profile-body">
+                  <section v-if="weeklyScorecard(week)" class="profile-section">
+                    <h3 class="stack-block-title">[ WEEKLY_SCORECARD ]</h3>
+                    <div class="scorecard-main">
+                      <div class="scorecard-total-wrap">
+                        <p class="scorecard-caption">overall weekly score</p>
+                        <p class="scorecard-total">{{ weeklyScorecard(week).weekly_score }}</p>
+                      </div>
+                      <p class="scorecard-delta" :class="scoreDeltaClass(weeklyScorecard(week).delta_from_last_week)">
+                        {{ formatScoreDelta(weeklyScorecard(week).delta_from_last_week) }} vs last week
+                      </p>
+                    </div>
+
+                    <div class="scorecard-components">
+                      <div
+                        v-for="item in weeklyScorecardComponents(week)"
+                        :key="item.key"
+                        class="scorecard-component"
+                      >
+                        <span class="scorecard-component-key">{{ item.label }}</span>
+                        <span class="scorecard-component-value">{{ item.value }}</span>
+                      </div>
+                    </div>
+
+                    <p class="stack-kv" v-if="weeklyScorecard(week).biggest_positive_factor">
+                      biggest_positive_factor: {{ weeklyScorecard(week).biggest_positive_factor }}
+                    </p>
+                    <p class="stack-kv" v-if="weeklyScorecard(week).biggest_negative_factor">
+                      biggest_negative_factor: {{ weeklyScorecard(week).biggest_negative_factor }}
+                    </p>
+                  </section>
+
                   <section
                     v-if="week.summary && weeklyUsesInsightText(week) && weeklyRenderedInsightText(week)"
                     class="profile-section"
@@ -679,6 +710,78 @@ function toStringList(items) {
 function weeklyStructuredOutput(week) {
   if (!week?.summary) return {};
   return parseStructuredOutput(week.summary.structured_output);
+}
+
+const SCORECARD_COMPONENT_ORDER = [
+  ["mood", "mood"],
+  ["stress", "stress"],
+  ["behavior", "behavior"],
+  ["health", "health"],
+  ["consistency", "consistency"]
+];
+
+function normalizeScoreValue(value) {
+  const num = Number(value);
+  if (Number.isNaN(num)) return null;
+  return Math.max(0, Math.min(100, Math.round(num)));
+}
+
+function normalizeScoreDelta(value) {
+  const num = Number(value);
+  if (Number.isNaN(num)) return null;
+  return Math.round(num);
+}
+
+function weeklyScorecard(week) {
+  const structured = weeklyStructuredOutput(week);
+  const source =
+    (structured && typeof structured.weekly_scorecard === "object" && structured.weekly_scorecard) ||
+    (week?.summary && typeof week.summary.weekly_scorecard === "object" && week.summary.weekly_scorecard) ||
+    null;
+
+  if (!source || typeof source !== "object") return null;
+
+  const weeklyScore = normalizeScoreValue(source.weekly_score);
+  const componentsRaw = source.components && typeof source.components === "object" ? source.components : {};
+  const components = {};
+  for (const [key] of SCORECARD_COMPONENT_ORDER) {
+    components[key] = normalizeScoreValue(componentsRaw[key]);
+  }
+
+  const hasAnyComponent = Object.values(components).some((value) => value != null);
+  if (weeklyScore == null && !hasAnyComponent) return null;
+
+  return {
+    weekly_score: weeklyScore ?? 0,
+    components,
+    delta_from_last_week: normalizeScoreDelta(source.delta_from_last_week) ?? 0,
+    biggest_positive_factor: String(source.biggest_positive_factor ?? "").trim(),
+    biggest_negative_factor: String(source.biggest_negative_factor ?? "").trim()
+  };
+}
+
+function weeklyScorecardComponents(week) {
+  const scorecard = weeklyScorecard(week);
+  if (!scorecard) return [];
+
+  return SCORECARD_COMPONENT_ORDER.map(([key, label]) => ({
+    key,
+    label,
+    value: scorecard.components?.[key] ?? "—"
+  }));
+}
+
+function formatScoreDelta(value) {
+  const delta = normalizeScoreDelta(value);
+  if (delta == null) return "—";
+  if (delta > 0) return `+${delta}`;
+  return `${delta}`;
+}
+
+function scoreDeltaClass(value) {
+  const delta = normalizeScoreDelta(value);
+  if (delta == null || delta === 0) return "neutral";
+  return delta > 0 ? "up" : "down";
 }
 
 function weeklyTopDrivers(week) {
@@ -1439,6 +1542,93 @@ onMounted(async () => {
   word-break: break-word;
   font-family: inherit;
   line-height: 1.5;
+}
+
+.scorecard-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 10px;
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.scorecard-total-wrap {
+  display: grid;
+  gap: 4px;
+}
+
+.scorecard-caption {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.scorecard-total {
+  margin: 0;
+  font-size: 34px;
+  line-height: 1;
+}
+
+.scorecard-delta {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.scorecard-delta.up {
+  color: #94e2b4;
+}
+
+.scorecard-delta.down {
+  color: #f3a6a6;
+}
+
+.scorecard-delta.neutral {
+  color: var(--muted);
+}
+
+.scorecard-components {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(5, minmax(72px, 1fr));
+}
+
+.scorecard-component {
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.scorecard-component-key {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.scorecard-component-value {
+  font-size: 18px;
+  line-height: 1;
+}
+
+@media (max-width: 720px) {
+  .scorecard-main {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .scorecard-components {
+    grid-template-columns: repeat(2, minmax(90px, 1fr));
+  }
 }
 
 .stack-divider {
