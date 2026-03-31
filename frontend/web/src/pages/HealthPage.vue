@@ -12,12 +12,18 @@
           <input class="input" type="date" v-model="selectedDate" @change="loadAll" />
         </div>
 
-        <button class="btn" :disabled="isSaving || isSafetySaving" @click="saveAll">
+        <button v-if="!showDashboard" class="btn" :disabled="isSaving || isSafetySaving" @click="saveAll">
           {{ isSaving ? "SAVING..." : "SAVE ALL" }}
         </button>
 
-        <button class="btn ghost" :disabled="isLoading" @click="loadAll">
-          {{ isLoading ? "LOADING..." : "REFRESH" }}
+        <button
+          class="btn ghost"
+          :class="{ active: showDashboard }"
+          :disabled="dashLoading"
+          type="button"
+          @click="toggleStatsView"
+        >
+          {{ dashLoading ? "LOADING..." : (showDashboard ? "ENTRY" : "STATS") }}
         </button>
       </div>
     </header>
@@ -27,6 +33,7 @@
     </div>
 
     <section class="grid">
+      <template v-if="!showDashboard">
       <!-- WEIGHT -->
       <div class="panel">
         <div class="panelHeader">
@@ -169,6 +176,99 @@
           <button class="btn ghost" @click="addWorkout">+ ADD WORKOUT</button>
         </div>
       </div>
+      </template>
+
+      <template v-else>
+      <div class="panel wide">
+        <div class="panelHeader">
+          <div class="panelTitle">HEALTH DASHBOARD</div>
+          <div class="panelMeta">LAST 7 DAYS (ENDING {{ healthDashboardEndDate }})</div>
+        </div>
+
+        <div v-if="dashLoading" class="empty">LOADING DASHBOARD...</div>
+
+        <div v-else class="dashboard-stack">
+          <div class="dashPanel wideDash">
+            <div class="dashTitle">Calories — Last 7 Days</div>
+            <div class="dashSub">IN / OUT / NET (IN - OUT)</div>
+
+            <div class="monoLine">
+              <span class="tag">TOTAL</span>
+              <span>IN {{ totalIn }} | OUT {{ totalOut }} | NET {{ totalNet }}</span>
+            </div>
+
+            <div class="dashTable caloriesTable">
+              <div class="dashHead calHead">
+                <div>DATE</div>
+                <div>IN</div>
+                <div>OUT</div>
+                <div>NET</div>
+              </div>
+
+              <div
+                v-for="entry in caloriesLast7"
+                :key="`cal-${entry.date}`"
+                class="dashRow calRow"
+              >
+                <div>{{ formatDashboardDate(entry.date) }}</div>
+                <div>{{ entry.calories_in ?? 0 }}</div>
+                <div>{{ entry.calories_out ?? 0 }}</div>
+                <div :class="{ neg: (entry.calories_net ?? 0) < 0, pos: (entry.calories_net ?? 0) > 0 }">
+                  {{ entry.calories_net ?? 0 }}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dashPanel wideDash">
+            <div class="dashTitle">Weight — Last 7 Days</div>
+            <div class="dashSub">DAILY WEIGHT ENTRIES</div>
+
+            <div class="dashTable">
+              <div class="dashHead">
+                <div>DATE</div>
+                <div>WEIGHT</div>
+              </div>
+
+              <div
+                v-for="entry in weightLast7"
+                :key="`weight-${entry.date}`"
+                class="dashRow"
+              >
+                <div>{{ formatDashboardDate(entry.date) }}</div>
+                <div>{{ formatWeight(entry.weight) }}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dashPanel wideDash">
+            <div class="dashTitle">Blood Pressure — Recent</div>
+            <div class="dashSub">LAST 7 ENTRIES</div>
+
+            <div class="dashTable">
+              <div class="dashHead bpHead">
+                <div>DATE</div>
+                <div>BP</div>
+              </div>
+
+              <div v-if="recentBpEntries.length === 0" class="dashRow bpRow">
+                <div>—</div>
+                <div>No blood pressure entries yet</div>
+              </div>
+
+              <div
+                v-for="entry in recentBpEntries"
+                :key="`bp-${entry.date}`"
+                class="dashRow bpRow"
+              >
+                <div>{{ formatDashboardDate(entry.date) }}</div>
+                <div>{{ entry.systolic }} / {{ entry.diastolic }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      </template>
 
     </section>
   </div>
@@ -176,6 +276,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from "vue";
+import { shiftDate, toDateOnly } from "../utils/chartUtils";
 
 const isLoading = ref(false);
 const isSaving = ref(false);
@@ -198,6 +299,12 @@ const safetyMeetingCompleted = ref(false);
 // multi/day values
 const dietRows = ref([]);
 const workoutRows = ref([]);
+const HEALTH_DASHBOARD_DAYS = 30;
+const CALORIES_WINDOW_DAYS = 7;
+const showDashboard = ref(false);
+const dashLoading = ref(false);
+const dashboardSeries = ref([]);
+const bpLast7 = ref([]);
 
 function flash(msg, type = "ok") {
   status.value = msg;
@@ -219,6 +326,54 @@ function getLocalDateString() {
     "-" +
     String(d.getDate()).padStart(2, "0")
   );
+}
+
+function todayDate() {
+  return toDateOnly(new Date());
+}
+
+function getRowDate(row) {
+  return String(row?.date ?? row?.entry_date ?? "");
+}
+
+function sortRowsByDate(rows) {
+  return [...rows].sort((a, b) => getRowDate(a).localeCompare(getRowDate(b)));
+}
+
+function buildEmptyHealthSeries(endDate, days) {
+  const startDate = shiftDate(endDate, -(days - 1));
+
+  return Array.from({ length: days }, (_, index) => {
+    const date = shiftDate(startDate, index);
+    return {
+      date,
+      weight: null,
+      systolic: null,
+      diastolic: null,
+      calories_in: 0,
+      calories_out: 0,
+      calories_net: 0,
+    };
+  });
+}
+
+function formatDashboardDate(value) {
+  const raw = String(value ?? "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return raw.slice(5);
+  }
+
+  const dt = new Date(raw);
+  if (Number.isNaN(dt.getTime())) return "--";
+  const month = String(dt.getMonth() + 1).padStart(2, "0");
+  const day = String(dt.getDate()).padStart(2, "0");
+  return `${month}-${day}`;
+}
+
+function formatWeight(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return `${n.toFixed(1)} lb`;
 }
 
 function mkKey() {
@@ -296,9 +451,51 @@ async function loadSafetyMeeting() {
   }
 }
 
+async function loadDashboard() {
+  if (dashLoading.value) return;
+  dashLoading.value = true;
+
+  try {
+    const baseUrl = getBaseUrl();
+    const end = selectedDate.value || todayDate();
+    const res = await fetch(`${baseUrl}/health/dashboard?end_date=${encodeURIComponent(end)}&days=${HEALTH_DASHBOARD_DAYS}`);
+
+    if (!res.ok) {
+      dashboardSeries.value = buildEmptyHealthSeries(end, HEALTH_DASHBOARD_DAYS);
+      bpLast7.value = [];
+      return;
+    }
+
+    const payload = await res.json();
+    const series = Array.isArray(payload?.series) ? payload.series : [];
+    dashboardSeries.value = sortRowsByDate(series.length ? series : buildEmptyHealthSeries(end, HEALTH_DASHBOARD_DAYS));
+    bpLast7.value = Array.isArray(payload?.bp_last_7) ? payload.bp_last_7 : [];
+  } catch (e) {
+    const end = selectedDate.value || todayDate();
+    dashboardSeries.value = buildEmptyHealthSeries(end, HEALTH_DASHBOARD_DAYS);
+    bpLast7.value = [];
+    flash(`DASHBOARD LOAD ERROR: ${e.message}`, "err");
+  } finally {
+    dashLoading.value = false;
+  }
+}
+
+async function toggleStatsView() {
+  if (showDashboard.value) {
+    showDashboard.value = false;
+    return;
+  }
+
+  showDashboard.value = true;
+  await loadDashboard();
+}
+
 async function loadAll() {
   await loadDay();
   await loadSafetyMeeting();
+  if (showDashboard.value) {
+    await loadDashboard();
+  }
 }
 
 function addDiet() {
@@ -321,6 +518,9 @@ async function removeDiet(idx) {
       }
       dietRows.value.splice(idx, 1);
       flash("DIET ENTRY DELETED");
+      if (showDashboard.value) {
+        await loadDashboard();
+      }
       return;
     } catch (e) {
       flash(`DELETE ERROR: ${e.message}`, "err");
@@ -342,6 +542,9 @@ async function removeWorkout(idx) {
       }
       workoutRows.value.splice(idx, 1);
       flash("WORKOUT DELETED");
+      if (showDashboard.value) {
+        await loadDashboard();
+      }
       return;
     } catch (e) {
       flash(`DELETE ERROR: ${e.message}`, "err");
@@ -389,6 +592,24 @@ const workoutTotalCalories = computed(() =>
 
 const dietCaloriesMeta = computed(() => `TOTAL CALORIES: ${Math.round(dietTotalCalories.value).toLocaleString()}`);
 const workoutCaloriesMeta = computed(() => `TOTAL CAL BURNT: ${Math.round(workoutTotalCalories.value).toLocaleString()}`);
+const orderedDashboardSeries = computed(() => sortRowsByDate(dashboardSeries.value));
+const caloriesLast7 = computed(() => {
+  const lastSeven = orderedDashboardSeries.value.slice(-CALORIES_WINDOW_DAYS);
+  return [...lastSeven].sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")));
+});
+const weightLast7 = computed(() => {
+  const lastSeven = orderedDashboardSeries.value.slice(-CALORIES_WINDOW_DAYS);
+  return [...lastSeven].sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")));
+});
+const totalIn = computed(() => caloriesLast7.value.reduce((sum, row) => sum + Number(row?.calories_in ?? 0), 0));
+const totalOut = computed(() => caloriesLast7.value.reduce((sum, row) => sum + Number(row?.calories_out ?? 0), 0));
+const totalNet = computed(() => caloriesLast7.value.reduce((sum, row) => sum + Number(row?.calories_net ?? 0), 0));
+const healthDashboardEndDate = computed(() => {
+  const latest = orderedDashboardSeries.value[orderedDashboardSeries.value.length - 1];
+  if (!latest) return formatDashboardDate(selectedDate.value || todayDate());
+  return formatDashboardDate(latest.date);
+});
+const recentBpEntries = computed(() => bpLast7.value.slice(0, 7));
 
 async function saveSafetyMeeting(options = {}) {
   const { silentSuccess = false, throwOnError = false } = options;
@@ -470,6 +691,9 @@ async function saveAll() {
     await saveSafetyMeeting({ silentSuccess: true, throwOnError: true });
 
     flash("SAVED");
+    if (showDashboard.value) {
+      await loadDashboard();
+    }
   } catch (e) {
     flash(`SAVE ERROR: ${e.message}`, "err");
   } finally {
@@ -522,6 +746,7 @@ onMounted(() => {
 
 .btn { border: 1px solid var(--line); background: rgba(255,255,255,0.06); color: var(--fg); border-radius: 10px; padding: 10px 12px; letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer; box-sizing: border-box; white-space: nowrap; }
 .btn.ghost { background: transparent; border-color: var(--line2); }
+.btn.active { background: rgba(255,255,255,0.12); border-color: var(--line); }
 .btn.small { padding: 10px 12px; }
 .btn.tiny { padding: 8px 10px; border-radius: 10px; }
 .btn.danger { border-color: rgba(255,80,80,0.55); background: rgba(255,80,80,0.08); }
@@ -534,6 +759,105 @@ onMounted(() => {
 .workoutRow { grid-template-columns: minmax(0,1fr) minmax(0,150px) 70px; }
 .empty { padding: 12px; border: 1px dashed var(--line2); border-radius: 10px; opacity: 0.8; letter-spacing: 0.1em; text-transform: uppercase; font-size: 12px; }
 .panelFooter { margin-top: 12px; display: flex; justify-content: flex-start; }
+
+.dashboard-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.dashPanel {
+  border: 1px solid var(--line2);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.wideDash {
+  grid-column: span 12;
+}
+
+.dashTitle {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.dashSub {
+  margin-top: 4px;
+  font-size: 12px;
+  opacity: 0.75;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.monoLine {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--line2);
+  border-radius: 10px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.tag {
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  padding: 4px 8px;
+  opacity: 0.9;
+}
+
+.dashTable {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.dashHead {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line2);
+  border-radius: 10px;
+  opacity: 0.85;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+
+.dashRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+}
+
+.bpHead,
+.bpRow {
+  grid-template-columns: 1fr 1fr;
+}
+
+.calHead {
+  grid-template-columns: 1fr 90px 90px 90px;
+}
+
+.calRow {
+  grid-template-columns: 1fr 90px 90px 90px;
+}
+
+.neg {
+  opacity: 0.85;
+}
+
+.pos {
+  opacity: 1;
+}
 
 @media (max-width: 980px) {
   .panel { grid-column: span 12; }
@@ -564,6 +888,23 @@ onMounted(() => {
   .dietRow > :nth-child(5) {
     grid-area: del;
     justify-self: end;
+  }
+}
+
+@media (max-width: 430px) {
+  .calHead,
+  .calRow {
+    grid-template-columns: minmax(0, 1fr) minmax(44px, 52px) minmax(44px, 52px) minmax(44px, 52px);
+    gap: 6px;
+    padding: 8px;
+    font-size: 12px;
+  }
+
+  .calHead > div,
+  .calRow > div,
+  .dashRow > div,
+  .dashHead > div {
+    min-width: 0;
   }
 }
 
