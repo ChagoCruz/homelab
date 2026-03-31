@@ -157,13 +157,89 @@
 
               <transition name="expand">
                 <div v-if="isProfileOpen(week.key)" class="profile-body">
-                  <section v-if="week.summary" class="profile-section">
+                  <section
+                    v-if="week.summary && weeklySystemState(week)"
+                    class="profile-section"
+                  >
+                    <h3 class="stack-block-title">[ SYSTEM_STATE ]</h3>
+                    <p class="profile-paragraph">{{ weeklySystemState(week) }}</p>
+                  </section>
+
+                  <section
+                    v-if="weeklyTopDrivers(week).length"
+                    class="profile-section"
+                  >
+                    <h3 class="stack-block-title">[ TOP_DRIVERS ]</h3>
+                    <ul class="profile-list">
+                      <li v-for="(item, idx) in weeklyTopDrivers(week)" :key="idx">
+                        <p class="stack-kv">driver: {{ item.driver || "—" }}</p>
+                        <p class="stack-kv" v-if="item.evidence">evidence: {{ item.evidence }}</p>
+                      </li>
+                    </ul>
+                  </section>
+
+                  <section
+                    v-if="weeklyCorrelations(week).length"
+                    class="profile-section"
+                  >
+                    <h3 class="stack-block-title">[ CORRELATIONS ]</h3>
+                    <ul class="profile-list">
+                      <li v-for="(item, idx) in weeklyCorrelations(week)" :key="idx">
+                        <p class="stack-kv">correlation: {{ item.correlation || "—" }}</p>
+                        <p class="stack-kv" v-if="item.strength">strength: {{ item.strength }}</p>
+                        <p class="stack-kv" v-if="item.interpretation">
+                          interpretation: {{ item.interpretation }}
+                        </p>
+                      </li>
+                    </ul>
+                  </section>
+
+                  <section
+                    v-if="weeklyPatterns(week).length"
+                    class="profile-section"
+                  >
+                    <h3 class="stack-block-title">[ PATTERNS ]</h3>
+                    <ul class="profile-list">
+                      <li v-for="(item, idx) in weeklyPatterns(week)" :key="idx">
+                        {{ item }}
+                      </li>
+                    </ul>
+                  </section>
+
+                  <section
+                    v-if="weeklyRiskFlags(week).length"
+                    class="profile-section"
+                  >
+                    <h3 class="stack-block-title">[ RISK_FLAGS ]</h3>
+                    <ul class="profile-list">
+                      <li v-for="(item, idx) in weeklyRiskFlags(week)" :key="idx">
+                        {{ item }}
+                      </li>
+                    </ul>
+                  </section>
+
+                  <section
+                    v-if="weeklyRecommendations(week).length"
+                    class="profile-section"
+                  >
+                    <h3 class="stack-block-title">[ RECOMMENDATIONS ]</h3>
+                    <ul class="profile-list">
+                      <li v-for="(item, idx) in weeklyRecommendations(week)" :key="idx">
+                        {{ item }}
+                      </li>
+                    </ul>
+                  </section>
+
+                  <section
+                    v-if="!weeklyHasBehavioralSections(week) && week.summary && weeklySummaryText(week)"
+                    class="profile-section"
+                  >
                     <h3 class="stack-block-title">[ SUMMARY ]</h3>
                     <p class="profile-paragraph">{{ weeklySummaryText(week) }}</p>
                   </section>
 
                   <section
-                    v-if="weeklySummaryThemes(week).length"
+                    v-if="!weeklyHasBehavioralSections(week) && weeklySummaryThemes(week).length"
                     class="profile-section"
                   >
                     <h3 class="stack-block-title">[ THEMES ]</h3>
@@ -586,10 +662,92 @@ function joinList(items) {
   return items.filter(Boolean).join(", ");
 }
 
+function toStringList(items) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => String(item ?? "").trim())
+    .filter(Boolean);
+}
+
+function weeklyStructuredOutput(week) {
+  if (!week?.summary) return {};
+  return parseStructuredOutput(week.summary.structured_output);
+}
+
+function weeklyTopDrivers(week) {
+  const structured = weeklyStructuredOutput(week);
+  const drivers = Array.isArray(structured.top_drivers) ? structured.top_drivers : [];
+
+  return drivers
+    .filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      driver: String(item.driver ?? "").trim(),
+      evidence: String(item.evidence ?? "").trim()
+    }))
+    .filter((item) => item.driver || item.evidence);
+}
+
+function weeklyCorrelations(week) {
+  const structured = weeklyStructuredOutput(week);
+  const correlations = Array.isArray(structured.correlations) ? structured.correlations : [];
+
+  return correlations
+    .filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      correlation: String(item.correlation ?? "").trim(),
+      strength: String(item.strength ?? "").trim(),
+      interpretation: String(item.interpretation ?? "").trim()
+    }))
+    .filter((item) => item.correlation || item.interpretation);
+}
+
+function weeklyPatterns(week) {
+  const structured = weeklyStructuredOutput(week);
+  return toStringList(structured.patterns);
+}
+
+function weeklyRiskFlags(week) {
+  const structured = weeklyStructuredOutput(week);
+  return toStringList(structured.risk_flags);
+}
+
+function weeklyRecommendations(week) {
+  const structured = weeklyStructuredOutput(week);
+  return toStringList(structured.recommendations);
+}
+
+function weeklyHasBehavioralSections(week) {
+  return (
+    weeklyTopDrivers(week).length > 0 ||
+    weeklyCorrelations(week).length > 0 ||
+    weeklyPatterns(week).length > 0 ||
+    weeklyRiskFlags(week).length > 0 ||
+    weeklyRecommendations(week).length > 0
+  );
+}
+
+function weeklySystemState(week) {
+  if (!week?.summary) return "";
+  const structured = weeklyStructuredOutput(week);
+  const systemState = typeof structured.system_state === "string" ? structured.system_state.trim() : "";
+  if (systemState) return systemState;
+
+  if (weeklyHasBehavioralSections(week)) {
+    const summary = typeof structured.summary === "string" ? structured.summary.trim() : "";
+    if (summary) return summary;
+    return String(week.summary.insight_text ?? "").trim();
+  }
+
+  return "";
+}
+
 function weeklySummaryText(week) {
   if (!week?.summary) return "";
-  const structured = parseStructuredOutput(week.summary.structured_output);
-  return structured.summary || week.summary.insight_text || "";
+  const structured = weeklyStructuredOutput(week);
+  if (typeof structured.summary === "string" && structured.summary.trim()) {
+    return structured.summary.trim();
+  }
+  return String(week.summary.insight_text ?? "").trim();
 }
 
 function monthlySummaryText(month) {
@@ -600,8 +758,8 @@ function monthlySummaryText(month) {
 
 function weeklySummaryThemes(week) {
   if (!week?.summary) return [];
-  const structured = parseStructuredOutput(week.summary.structured_output);
-  return Array.isArray(structured.themes) ? structured.themes : [];
+  const structured = weeklyStructuredOutput(week);
+  return toStringList(structured.themes);
 }
 
 function monthlySummaryThemes(month) {
