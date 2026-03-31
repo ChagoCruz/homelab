@@ -170,44 +170,12 @@
         </div>
       </div>
 
-      <!-- DETAILED ANALYTICS -->
-      <div class="panel wide">
-        <div class="panelHeader">
-          <div class="panelTitle">DETAILED ANALYTICS</div>
-          <div class="panelMeta">{{ analyticsRangeLabel }}</div>
-        </div>
-
-        <div class="analyticsControls">
-          <span class="analyticsLabel">RANGE</span>
-          <button
-            v-for="days in [14, 21, 30]"
-            :key="`analytics-${days}`"
-            type="button"
-            class="btn ghost tiny"
-            :class="{ active: analyticsDays === days }"
-            :disabled="analyticsLoading"
-            @click="setAnalyticsDays(days)"
-          >
-            {{ days }}D
-          </button>
-        </div>
-
-        <div class="analyticsStack">
-          <MoodOverlayChart :rows="analyticsFacts" :loading="analyticsLoading" :error="analyticsError" />
-          <CaloriesWorkoutChart :rows="analyticsFacts" :loading="analyticsLoading" :error="analyticsError" />
-          <MoodWeatherHeatmap :rows="analyticsFacts" :loading="analyticsLoading" :error="analyticsError" />
-        </div>
-      </div>
     </section>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from "vue";
-import CaloriesWorkoutChart from "../components/CaloriesWorkoutChart.vue";
-import MoodOverlayChart from "../components/MoodOverlayChart.vue";
-import MoodWeatherHeatmap from "../components/MoodWeatherHeatmap.vue";
-import { shiftDate } from "../utils/chartUtils";
 
 const isLoading = ref(false);
 const isSaving = ref(false);
@@ -231,12 +199,6 @@ const safetyMeetingCompleted = ref(false);
 const dietRows = ref([]);
 const workoutRows = ref([]);
 
-// analytics
-const analyticsLoading = ref(false);
-const analyticsError = ref("");
-const analyticsDays = ref(21);
-const analyticsFacts = ref([]);
-
 function flash(msg, type = "ok") {
   status.value = msg;
   statusType.value = type;
@@ -258,14 +220,6 @@ function getLocalDateString() {
     String(d.getDate()).padStart(2, "0")
   );
 }
-
-const analyticsStartDate = computed(() =>
-  shiftDate(selectedDate.value, -(analyticsDays.value - 1))
-);
-
-const analyticsRangeLabel = computed(
-  () => `LAST ${analyticsDays.value} DAYS (${analyticsStartDate.value} → ${selectedDate.value})`
-);
 
 function mkKey() {
   return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -342,43 +296,9 @@ async function loadSafetyMeeting() {
   }
 }
 
-async function loadAnalytics() {
-  if (analyticsLoading.value) return;
-  analyticsLoading.value = true;
-  analyticsError.value = "";
-
-  try {
-    const baseUrl = getBaseUrl();
-    const url = new URL(`${baseUrl}/stats/daily-life-facts`);
-    url.searchParams.set("start_date", analyticsStartDate.value);
-    url.searchParams.set("end_date", selectedDate.value);
-
-    const res = await fetch(url.toString());
-    if (!res.ok) {
-      const msg = await res.text().catch(() => "");
-      throw new Error(msg || `HTTP ${res.status}`);
-    }
-
-    const payload = await res.json();
-    analyticsFacts.value = Array.isArray(payload) ? payload : [];
-  } catch (e) {
-    analyticsFacts.value = [];
-    analyticsError.value = `ANALYTICS ERROR: ${e.message}`;
-  } finally {
-    analyticsLoading.value = false;
-  }
-}
-
-function setAnalyticsDays(days) {
-  if (analyticsLoading.value || analyticsDays.value === days) return;
-  analyticsDays.value = days;
-  loadAnalytics();
-}
-
 async function loadAll() {
   await loadDay();
   await loadSafetyMeeting();
-  await loadAnalytics();
 }
 
 function addDiet() {
@@ -401,7 +321,6 @@ async function removeDiet(idx) {
       }
       dietRows.value.splice(idx, 1);
       flash("DIET ENTRY DELETED");
-      await loadAnalytics();
       return;
     } catch (e) {
       flash(`DELETE ERROR: ${e.message}`, "err");
@@ -423,7 +342,6 @@ async function removeWorkout(idx) {
       }
       workoutRows.value.splice(idx, 1);
       flash("WORKOUT DELETED");
-      await loadAnalytics();
       return;
     } catch (e) {
       flash(`DELETE ERROR: ${e.message}`, "err");
@@ -552,7 +470,6 @@ async function saveAll() {
     await saveSafetyMeeting({ silentSuccess: true, throwOnError: true });
 
     flash("SAVED");
-    await loadAnalytics();
   } catch (e) {
     flash(`SAVE ERROR: ${e.message}`, "err");
   } finally {
@@ -566,7 +483,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* base terminal styles + analytics layout */
+/* base terminal styles */
 
 .screen { padding: var(--pad); position: relative; overflow: hidden; }
 .scanlines { pointer-events: none; position: absolute; inset: 0; background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.02), rgba(255,255,255,0.02) 1px, transparent 1px, transparent 3px); mix-blend-mode: overlay; opacity: 0.35; }
@@ -617,32 +534,6 @@ onMounted(() => {
 .workoutRow { grid-template-columns: minmax(0,1fr) minmax(0,150px) 70px; }
 .empty { padding: 12px; border: 1px dashed var(--line2); border-radius: 10px; opacity: 0.8; letter-spacing: 0.1em; text-transform: uppercase; font-size: 12px; }
 .panelFooter { margin-top: 12px; display: flex; justify-content: flex-start; }
-
-/* ANALYTICS styles */
-.analyticsControls {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
-}
-
-.analyticsLabel {
-  opacity: 0.75;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  font-size: 12px;
-}
-
-.btn.active {
-  border-color: var(--line);
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.analyticsStack {
-  display: grid;
-  gap: 12px;
-}
 
 @media (max-width: 980px) {
   .panel { grid-column: span 12; }

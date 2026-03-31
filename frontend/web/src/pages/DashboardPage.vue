@@ -18,14 +18,12 @@
               label="mood"
               :value="moodValue"
               :trend="moodTrend"
-              :spark-values="moodSparkValues"
             />
 
             <KpiCard
               label="calories"
               :value="caloriesValue"
               :trend="caloriesTrend"
-              :spark-values="caloriesSparkValues"
             />
 
             <KpiCard
@@ -38,38 +36,76 @@
               label="weight"
               :value="weightValue"
               :trend="weightTrend"
-              :spark-values="weightSparkValues"
             />
           </div>
         </section>
 
         <section class="panel-block wide">
           <div class="block-header">
-            <h2>featured chart</h2>
-
-            <div class="range-chips" role="group" aria-label="mood range">
-              <button
-                v-for="days in [7, 14, 30]"
-                :key="`range-${days}`"
-                class="chip"
-                :class="{ active: selectedRangeDays === days }"
-                :disabled="statsLoading"
-                @click="setRange(days)"
-              >
-                {{ days }}d
-              </button>
-            </div>
+            <h2>health dashboard</h2>
+            <span class="block-meta">last 7 days (ending {{ healthDashboardEndDate }})</span>
           </div>
 
-          <FeaturedMoodTrend
-            :rows="dailyFacts"
-            :loading="statsLoading"
-            :error="dailyError"
-            :meta="featuredMeta"
-          />
+          <div v-if="healthLoading" class="empty-row">loading dashboard...</div>
 
-          <div class="primary-cta-row">
-            <RouterLink to="/stats/health" class="terminal-link strong-link">view detailed analytics</RouterLink>
+          <div v-else class="dashboard-stack">
+            <div class="dashPanel wideDash">
+              <div class="dashTitle">Calories — Last 7 Days</div>
+              <div class="dashSub">IN / OUT / NET (IN - OUT)</div>
+
+              <div class="monoLine">
+                <span class="tag">TOTAL</span>
+                <span>IN {{ totalIn }} | OUT {{ totalOut }} | NET {{ totalNet }}</span>
+              </div>
+
+              <div class="dashTable caloriesTable">
+                <div class="dashHead calHead">
+                  <div>DATE</div>
+                  <div>IN</div>
+                  <div>OUT</div>
+                  <div>NET</div>
+                </div>
+
+                <div
+                  v-for="entry in caloriesLast7"
+                  :key="`cal-${entry.date}`"
+                  class="dashRow calRow"
+                >
+                  <div>{{ formatDashboardDate(entry.date) }}</div>
+                  <div>{{ entry.calories_in ?? 0 }}</div>
+                  <div>{{ entry.calories_out ?? 0 }}</div>
+                  <div :class="{ neg: (entry.calories_net ?? 0) < 0, pos: (entry.calories_net ?? 0) > 0 }">
+                    {{ entry.calories_net ?? 0 }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="dashPanel wideDash">
+              <div class="dashTitle">Blood Pressure — Recent</div>
+              <div class="dashSub">LAST 7 ENTRIES</div>
+
+              <div class="dashTable">
+                <div class="dashHead bpHead">
+                  <div>DATE</div>
+                  <div>BP</div>
+                </div>
+
+                <div v-if="recentBpEntries.length === 0" class="dashRow bpRow">
+                  <div>—</div>
+                  <div>No blood pressure entries yet</div>
+                </div>
+
+                <div
+                  v-for="entry in recentBpEntries"
+                  :key="`bp-${entry.date}`"
+                  class="dashRow bpRow"
+                >
+                  <div>{{ formatDashboardDate(entry.date) }}</div>
+                  <div>{{ entry.systolic }} / {{ entry.diastolic }}</div>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -140,25 +176,42 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import AIInsightPanel from "../components/AIInsightPanel.vue";
-import FeaturedMoodTrend from "../components/FeaturedMoodTrend.vue";
 import KpiCard from "../components/KpiCard.vue";
 import { formatSignedDelta, shiftDate, toDateOnly, toFiniteNumber } from "../utils/chartUtils";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const DAILY_FACT_WINDOW_DAYS = 7;
+const HEALTH_DASHBOARD_DAYS = 30;
+const CALORIES_WINDOW_DAYS = 7;
 
 const latestWeather = ref(null);
 const weatherLoading = ref(false);
 const weatherError = ref("");
 
-const selectedRangeDays = ref(7);
 const dailyFacts = ref([]);
-const statsLoading = ref(false);
-const dailyError = ref("");
-
+const healthLoading = ref(false);
 const healthSeries = ref([]);
+const bpLast7 = ref([]);
 
 function todayDate() {
   return toDateOnly(new Date());
+}
+
+function buildEmptyHealthSeries(endDate, days) {
+  const startDate = shiftDate(endDate, -(days - 1));
+
+  return Array.from({ length: days }, (_, index) => {
+    const date = shiftDate(startDate, index);
+    return {
+      date,
+      weight: null,
+      systolic: null,
+      diastolic: null,
+      calories_in: 0,
+      calories_out: 0,
+      calories_net: 0,
+    };
+  });
 }
 
 function normalizeMood(value) {
@@ -181,6 +234,19 @@ function formatClockTime(value) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function formatDashboardDate(value) {
+  const raw = String(value ?? "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return raw.slice(5);
+  }
+
+  const dt = new Date(raw);
+  if (Number.isNaN(dt.getTime())) return "--";
+  const month = String(dt.getMonth() + 1).padStart(2, "0");
+  const day = String(dt.getDate()).padStart(2, "0");
+  return `${month}-${day}`;
 }
 
 function displayWeatherValue(value, formatter) {
@@ -222,22 +288,6 @@ function sortRowsByDate(rows) {
   return [...rows].sort((a, b) => getRowDate(a).localeCompare(getRowDate(b)));
 }
 
-function compactConsecutiveValues(values, epsilon = 0.01) {
-  const compacted = [];
-  let previous = null;
-
-  for (const raw of values) {
-    const value = toFiniteNumber(raw);
-    if (value === null) continue;
-    if (previous === null || Math.abs(value - previous) > epsilon) {
-      compacted.push(value);
-      previous = value;
-    }
-  }
-
-  return compacted;
-}
-
 async function fetchLatestWeather() {
   weatherLoading.value = true;
   weatherError.value = "";
@@ -264,7 +314,7 @@ async function fetchLatestWeather() {
 
 async function fetchDailyLifeFacts() {
   const end = todayDate();
-  const start = shiftDate(end, -(selectedRangeDays.value - 1));
+  const start = shiftDate(end, -(DAILY_FACT_WINDOW_DAYS - 1));
 
   const url = new URL(`${API_BASE}/stats/daily-life-facts`);
   url.searchParams.set("start_date", start);
@@ -281,42 +331,38 @@ async function fetchDailyLifeFacts() {
 }
 
 async function fetchHealthSnapshot() {
+  healthLoading.value = true;
+
   try {
     const end = todayDate();
-    const res = await fetch(`${API_BASE}/health/dashboard?end_date=${encodeURIComponent(end)}&days=30`);
+    const res = await fetch(`${API_BASE}/health/dashboard?end_date=${encodeURIComponent(end)}&days=${HEALTH_DASHBOARD_DAYS}`);
+
     if (!res.ok) {
-      healthSeries.value = [];
+      healthSeries.value = buildEmptyHealthSeries(end, HEALTH_DASHBOARD_DAYS);
+      bpLast7.value = [];
       return;
     }
 
     const payload = await res.json();
-    healthSeries.value = sortRowsByDate(Array.isArray(payload?.series) ? payload.series : []);
+    const series = Array.isArray(payload?.series) ? payload.series : [];
+    healthSeries.value = sortRowsByDate(series.length ? series : buildEmptyHealthSeries(end, HEALTH_DASHBOARD_DAYS));
+    bpLast7.value = Array.isArray(payload?.bp_last_7) ? payload.bp_last_7 : [];
   } catch {
-    healthSeries.value = [];
+    const end = todayDate();
+    healthSeries.value = buildEmptyHealthSeries(end, HEALTH_DASHBOARD_DAYS);
+    bpLast7.value = [];
+  } finally {
+    healthLoading.value = false;
   }
 }
 
 async function fetchStats() {
-  statsLoading.value = true;
-  dailyError.value = "";
-
   try {
     dailyFacts.value = await fetchDailyLifeFacts();
-  } catch (err) {
+  } catch {
     dailyFacts.value = [];
-    dailyError.value = err?.message || "unable to load daily stats";
-  } finally {
-    statsLoading.value = false;
   }
 }
-
-function setRange(days) {
-  if (selectedRangeDays.value === days || statsLoading.value) return;
-  selectedRangeDays.value = days;
-  fetchStats();
-}
-
-const featuredMeta = computed(() => `${selectedRangeDays.value}-day focus`);
 
 const latestMood = computed(() => findLastBy(dailyFacts.value, (row) => normalizeMood(row?.avg_mood_score) !== null));
 const previousMood = computed(() => findPrevBy(dailyFacts.value, (row) => normalizeMood(row?.avg_mood_score) !== null));
@@ -330,11 +376,6 @@ const moodTrend = computed(() => {
   if (latest === null || prev === null) return "not enough entries";
   return `${formatSignedDelta(latest - prev)} vs previous day`;
 });
-const moodSparkValues = computed(() =>
-  dailyFacts.value
-    .map((row) => normalizeMood(row?.avg_mood_score))
-    .filter((value) => value !== null)
-);
 
 const latestCalories = computed(() => findLastBy(dailyFacts.value, (row) => toFiniteNumber(row?.total_calories) !== null));
 const previousCalories = computed(() => findPrevBy(dailyFacts.value, (row) => toFiniteNumber(row?.total_calories) !== null));
@@ -348,7 +389,6 @@ const caloriesTrend = computed(() => {
   if (latest === null || prev === null) return "not enough entries";
   return `${formatSignedDelta(latest - prev, 0)} kcal vs previous`;
 });
-const caloriesSparkValues = computed(() => dailyFacts.value.map((row) => toFiniteNumber(row?.total_calories)));
 
 const alcoholDaysValue = computed(() => {
   const recent = dailyFacts.value.slice(-7);
@@ -376,9 +416,23 @@ const weightTrend = computed(() => {
   if (latest === null || prev === null) return "not enough entries";
   return `${formatSignedDelta(latest - prev)} lb vs previous`;
 });
-const weightSparkValues = computed(() =>
-  compactConsecutiveValues(orderedHealthSeries.value.map((row) => row?.weight))
-);
+
+const caloriesLast7 = computed(() => {
+  const lastSeven = orderedHealthSeries.value.slice(-CALORIES_WINDOW_DAYS);
+  return [...lastSeven].sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")));
+});
+
+const totalIn = computed(() => caloriesLast7.value.reduce((sum, row) => sum + Number(row?.calories_in ?? 0), 0));
+const totalOut = computed(() => caloriesLast7.value.reduce((sum, row) => sum + Number(row?.calories_out ?? 0), 0));
+const totalNet = computed(() => caloriesLast7.value.reduce((sum, row) => sum + Number(row?.calories_net ?? 0), 0));
+
+const healthDashboardEndDate = computed(() => {
+  const latest = orderedHealthSeries.value[orderedHealthSeries.value.length - 1];
+  if (!latest) return formatDashboardDate(todayDate());
+  return formatDashboardDate(latest.date);
+});
+
+const recentBpEntries = computed(() => bpLast7.value.slice(0, 7));
 
 onMounted(async () => {
   await Promise.all([fetchLatestWeather(), fetchStats(), fetchHealthSnapshot()]);
@@ -468,36 +522,113 @@ onMounted(async () => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.range-chips {
-  display: inline-flex;
-  gap: 6px;
+.empty-row {
+  padding: 12px;
+  border: 1px dashed var(--line2);
+  border-radius: 10px;
+  opacity: 0.8;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: 12px;
 }
 
-.chip {
+.dashboard-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.dashPanel {
   border: 1px solid var(--line2);
-  border-radius: 999px;
-  padding: 4px 10px;
-  background: transparent;
-  color: var(--fg);
-  font: inherit;
-  text-transform: lowercase;
-  cursor: pointer;
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.02);
 }
 
-.chip.active {
-  border-color: var(--line);
-  background: rgba(255, 255, 255, 0.08);
+.wideDash {
+  grid-column: span 12;
 }
 
-.chip:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
+.dashTitle {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
-.primary-cta-row {
+.dashSub {
+  margin-top: 4px;
+  font-size: 12px;
+  opacity: 0.75;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.monoLine {
   margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--line2);
+  border-radius: 10px;
   display: flex;
-  justify-content: flex-start;
+  gap: 10px;
+  align-items: center;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.tag {
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  padding: 4px 8px;
+  opacity: 0.9;
+}
+
+.dashTable {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.dashHead {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line2);
+  border-radius: 10px;
+  opacity: 0.85;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+
+.dashRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+}
+
+.bpHead,
+.bpRow {
+  grid-template-columns: 1fr 1fr;
+}
+
+.calHead {
+  grid-template-columns: 1fr 90px 90px 90px;
+}
+
+.calRow {
+  grid-template-columns: 1fr 90px 90px 90px;
+}
+
+.neg {
+  opacity: 0.85;
+}
+
+.pos {
+  opacity: 1;
 }
 
 .kv-list {
@@ -543,11 +674,6 @@ onMounted(async () => {
   background: rgba(255, 255, 255, 0.06);
 }
 
-.strong-link {
-  border-color: rgba(255, 255, 255, 0.44);
-  background: rgba(255, 255, 255, 0.04);
-}
-
 @media (min-width: 920px) {
   .dashboard-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -575,10 +701,24 @@ onMounted(async () => {
     font-size: 0.74rem;
   }
 
-  .terminal-link,
-  .chip {
+  .terminal-link {
     font-size: 0.84rem;
     padding: 4px 8px;
+  }
+
+  .calHead,
+  .calRow {
+    grid-template-columns: minmax(0, 1fr) minmax(44px, 52px) minmax(44px, 52px) minmax(44px, 52px);
+    gap: 6px;
+    padding: 8px;
+    font-size: 12px;
+  }
+
+  .calHead > div,
+  .calRow > div,
+  .dashRow > div,
+  .dashHead > div {
+    min-width: 0;
   }
 }
 </style>
