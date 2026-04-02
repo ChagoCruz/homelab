@@ -5,6 +5,7 @@ from typing import Any
 
 import ephem
 import requests
+from zoneinfo import ZoneInfo
 
 
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
@@ -12,6 +13,12 @@ OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 GRAND_RAPIDS_LAT = 42.9634
 GRAND_RAPIDS_LON = -85.6681
 
+def get_local_now():
+    return datetime.now(ZoneInfo("America/Detroit"))
+
+def get_local_midnight():
+    now = datetime.now(ZoneInfo("America/Detroit"))
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
 def weather_code_to_text(code: int) -> str:
     mapping = {
@@ -48,27 +55,40 @@ def weather_code_to_text(code: int) -> str:
 
 
 def get_moon_phase_percent() -> float:
-    moon = ephem.Moon(datetime.utcnow())
+    local_midnight = get_local_midnight()
+    utc_midnight = local_midnight.astimezone(ZoneInfo("UTC"))
+
+    moon = ephem.Moon(utc_midnight)
     return float(moon.phase)
 
+def get_moon_age_days() -> float:
+    local_midnight = get_local_midnight()
+    utc_midnight = local_midnight.astimezone(ZoneInfo("UTC"))
 
-def moon_phase_name(phase: float) -> str:
-    if phase < 1:
+    now = ephem.Date(utc_midnight)
+    prev_new = ephem.previous_new_moon(now)
+    return float(now - prev_new)
+
+
+def moon_phase_name(age: float) -> str:
+    if age < 1.84566:
         return "New Moon"
-    elif phase < 25:
+    elif age < 5.53699:
         return "Waxing Crescent"
-    elif phase < 26:
+    elif age < 9.22831:
         return "First Quarter"
-    elif phase < 50:
+    elif age < 12.91963:
         return "Waxing Gibbous"
-    elif phase < 51:
+    elif age < 16.61096:
         return "Full Moon"
-    elif phase < 75:
+    elif age < 20.30228:
         return "Waning Gibbous"
-    elif phase < 76:
+    elif age < 23.99361:
         return "Last Quarter"
-    else:
+    elif age < 27.68493:
         return "Waning Crescent"
+    else:
+        return "New Moon"
 
 
 def fetch_daily_weather(lat: float = GRAND_RAPIDS_LAT, lon: float = GRAND_RAPIDS_LON) -> dict[str, Any]:
@@ -89,6 +109,7 @@ def fetch_daily_weather(lat: float = GRAND_RAPIDS_LAT, lon: float = GRAND_RAPIDS
     daily = data["daily"]
     weather_code = int(daily["weathercode"][0])
     phase_percent = get_moon_phase_percent()
+    age = get_moon_age_days()
 
     return {
         "weather_date": daily["time"][0],
@@ -99,6 +120,6 @@ def fetch_daily_weather(lat: float = GRAND_RAPIDS_LAT, lon: float = GRAND_RAPIDS
         "sunrise": daily["sunrise"][0],
         "sunset": daily["sunset"][0],
         "moon_phase_percent": round(phase_percent, 2),
-        "moon_phase_name": moon_phase_name(phase_percent),
+        "moon_phase_name": moon_phase_name(age),
         "raw_payload": data,
     }
