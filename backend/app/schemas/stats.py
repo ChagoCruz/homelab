@@ -17,10 +17,14 @@ class DailyLifeFactOut(BaseModel):
     had_journal: bool
     had_journal_analysis: bool
 
-    food_entry_count: int
+    total_entry_count: int
     total_calories: float
+    food_entry_count: int
+    food_calories: float
     drink_entry_count: int
+    drink_calories: float
     alcohol_entry_count: int
+    alcohol_calories: float
     had_alcohol: bool
 
     avg_weight: float | None = None
@@ -64,11 +68,18 @@ class WeeklyLifeSummaryOut(BaseModel):
     min_mood_score: float | None = None
     max_mood_score: float | None = None
 
-    food_entry_count: int
+    total_entry_count: int
     total_calories: float
     avg_daily_calories: float | None = None
+    food_entry_count: int
+    food_total_calories: float
+    food_avg_daily_calories: float | None = None
     drink_entry_count: int
-    alcohol_entry_count: int
+    drink_total_calories: float
+    drink_avg_daily_calories: float | None = None
+    alc_entry_count: int
+    alc_total_calories: float
+    alc_avg_daily_calories: float | None = None
     alcohol_days: int
 
     avg_weight: float | None = None

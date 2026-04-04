@@ -1,17 +1,26 @@
 CREATE OR REPLACE VIEW vw_daily_diet_summary AS
 SELECT
     d.log_date AS day,
-    COUNT(*) AS food_entry_count,
+    COUNT(*) AS total_entry_count,
     COALESCE(SUM(d.calories), 0) AS total_calories,
-    COUNT(*) FILTER (WHERE LOWER(d.meal) = 'drink') AS drink_entry_count,
+	COUNT(*) FILTER (WHERE LOWER(d.meal) != 'drink') AS food_entry_count,
+	COALESCE(SUM(d.calories) FILTER (
+        WHERE LOWER(d.meal) != 'drink'
+    ), 0) AS food_calories,
+    COUNT(*) FILTER (WHERE LOWER(d.meal) = 'drink' AND d.food NOT LIKE 'beer%') AS drink_entry_count,
+	COALESCE(SUM(d.calories) FILTER (
+        WHERE LOWER(d.meal) = 'drink' AND LOWER(d.food) NOT LIKE 'beer%'
+    ), 0) AS drink_calories,
     COUNT(*) FILTER (WHERE LOWER(d.food) LIKE 'beer%') AS alcohol_entry_count,
+	COALESCE(SUM(d.calories) FILTER (
+        WHERE LOWER(d.meal) = 'drink' AND LOWER(d.food) LIKE 'beer%'
+    ), 0) AS alcohol_calories,
     BOOL_OR(LOWER(d.food) LIKE 'beer%') AS had_alcohol,
     ARRAY_REMOVE(ARRAY_AGG(DISTINCT d.meal), NULL) AS meals_logged,
     ARRAY_REMOVE(ARRAY_AGG(DISTINCT d.confidence), NULL) AS confidence_levels,
     ARRAY_AGG(d.food ORDER BY d.id) AS foods_logged
 FROM diet d
 GROUP BY d.log_date
-ORDER BY d.log_date;
 
 CREATE OR REPLACE VIEW vw_daily_safety_meeting_summary AS
 SELECT
@@ -135,10 +144,14 @@ SELECT
     COALESCE(jad.emotional_tones, ARRAY[]::text[]) AS emotional_tones,
     COALESCE(jad.analyzed_journal_count, 0) AS analyzed_journal_count,
 
+	COALESCE(dd.total_entry_count, 0) AS total_entry_count,
+	COALESCE(dd.total_calories, 0) AS total_calories,
     COALESCE(dd.food_entry_count, 0) AS food_entry_count,
-    COALESCE(dd.total_calories, 0) AS total_calories,
+	COALESCE(dd.food_calories, 0) AS food_calories,
     COALESCE(dd.drink_entry_count, 0) AS drink_entry_count,
+	COALESCE(dd.drink_calories, 0) AS drink_calories,
     COALESCE(dd.alcohol_entry_count, 0) AS alcohol_entry_count,
+	COALESCE(dd.alcohol_calories, 0) AS alcohol_calories,
     COALESCE(dd.had_alcohol, FALSE) AS had_alcohol,
     COALESCE(dd.meals_logged, ARRAY[]::text[]) AS meals_logged,
     COALESCE(dd.confidence_levels, ARRAY[]::text[]) AS confidence_levels,
@@ -345,10 +358,14 @@ SELECT
     COALESCE(vdjh.had_journal_analysis, FALSE) AS had_journal_analysis,
 
     -- diet
+	COALESCE(vdds.total_entry_count, 0) AS total_entry_count,
+	COALESCE(vdds.total_calories, 0) AS total_calories,
     COALESCE(vdds.food_entry_count, 0) AS food_entry_count,
-    COALESCE(vdds.total_calories, 0) AS total_calories,
+	COALESCE(vdds.food_calories, 0) AS food_calories,
     COALESCE(vdds.drink_entry_count, 0) AS drink_entry_count,
+	COALESCE(vdds.drink_calories, 0) AS drink_calories,
     COALESCE(vdds.alcohol_entry_count, 0) AS alcohol_entry_count,
+	COALESCE(vdds.alcohol_calories, 0) AS alcohol_calories,
     COALESCE(vdds.had_alcohol, FALSE) AS had_alcohol,
 
     -- health
@@ -416,10 +433,14 @@ WITH daily AS (
         vdlf.had_journal_analysis,
 
         -- diet
+		vdlf.total_entry_count,
+		vdlf.total_calories,
         vdlf.food_entry_count,
-        vdlf.total_calories,
+		vdlf.food_calories,
         vdlf.drink_entry_count,
+		vdlf.drink_calories,
         vdlf.alcohol_entry_count,
+		vdlf.alcohol_calories,
         vdlf.had_alcohol,
 
         -- health
@@ -474,11 +495,18 @@ weekly_core AS (
         MAX(d.max_mood_score)::numeric(6,2) AS max_mood_score,
 
         -- diet
+		SUM(d.total_entry_count) AS total_entry_count,
+		SUM(d.total_calories)::numeric(10,2) AS total_calories,
+		AVG(d.total_calories)::numeric(10,2) AS avg_daily_calories,		
         SUM(d.food_entry_count) AS food_entry_count,
-        SUM(d.total_calories)::numeric(10,2) AS total_calories,
-        AVG(d.total_calories)::numeric(10,2) AS avg_daily_calories,
+		SUM(d.food_calories)::numeric(10,2) AS food_total_calories,
+        AVG(d.food_calories)::numeric(10,2) AS food_avg_daily_calories,
         SUM(d.drink_entry_count) AS drink_entry_count,
-        SUM(d.alcohol_entry_count) AS alcohol_entry_count,
+		SUM(d.drink_calories) AS drink_total_calories,
+		AVG(d.drink_calories)::numeric(10,2) AS drink_avg_daily_calories,
+        SUM(d.alcohol_entry_count) AS alc_entry_count,
+		SUM(d.alcohol_calories) AS alc_total_calories,
+		AVG(d.alcohol_calories)::numeric(10,2) AS alc_avg_daily_calories,
         COUNT(*) FILTER (WHERE d.had_alcohol) AS alcohol_days,
 
         -- health
@@ -581,12 +609,19 @@ SELECT
     wc.max_mood_score,
 
     -- diet
+	wc.total_entry_count,
+	wc.total_calories,
+	wc.avg_daily_calories,
     wc.food_entry_count,
-    wc.total_calories,
-    wc.avg_daily_calories,
+	wc.food_total_calories,
+    wc.food_avg_daily_calories,
     wc.drink_entry_count,
-    wc.alcohol_entry_count,
-    wc.alcohol_days,
+    wc.drink_total_calories,
+    wc.drink_avg_daily_calories,
+	wc.alc_entry_count,
+    wc.alc_total_calories,
+    wc.alc_avg_daily_calories,
+	wc.alcohol_days,
 
     -- health
     wc.avg_weight,
