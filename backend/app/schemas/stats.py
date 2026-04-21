@@ -53,6 +53,47 @@ class DailyLifeFactOut(BaseModel):
     temp_band: str | None = None
 
 
+class WeeklyKpiDeltaOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    current: float | None = None
+    previous_week_value: float | None = None
+    delta_from_previous_week: float | None = None
+
+
+class WeeklyHistoryOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    week_start: date
+    week_end: date
+
+    total_food_calories: float
+    total_drink_calories: float
+    total_beer_calories: float
+    total_exercise_calories: float
+    net_calories: float
+    avg_daily_calories_in: float | None = None
+    avg_daily_calories_out: float | None = None
+
+
+class WeeklyLifeSummaryDashboardOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    week_start: date | None = None
+    week_end: date | None = None
+
+    total_food_calories: WeeklyKpiDeltaOut = Field(default_factory=WeeklyKpiDeltaOut)
+    total_drink_calories: WeeklyKpiDeltaOut = Field(default_factory=WeeklyKpiDeltaOut)
+    total_beer_calories: WeeklyKpiDeltaOut = Field(default_factory=WeeklyKpiDeltaOut)
+    total_exercise_calories: WeeklyKpiDeltaOut = Field(default_factory=WeeklyKpiDeltaOut)
+    net_calories: WeeklyKpiDeltaOut = Field(default_factory=WeeklyKpiDeltaOut)
+    avg_daily_calories_in: WeeklyKpiDeltaOut = Field(default_factory=WeeklyKpiDeltaOut)
+    avg_daily_calories_out: WeeklyKpiDeltaOut = Field(default_factory=WeeklyKpiDeltaOut)
+
+    days_since_last_safety_meeting: int | None = None
+    weekly_history: list[WeeklyHistoryOut] = Field(default_factory=list)
+
+
 class WeeklyLifeSummaryOut(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
