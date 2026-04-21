@@ -231,13 +231,13 @@
                     v-for="row in weeklyHistoryRows"
                     :key="`history-${row.week_start}`"
                   >
-                    <td>{{ formatDashboardDate(row.week_end) }}</td>
-                    <td>{{ formatMetricValue(row.total_food_calories) }}</td>
-                    <td>{{ formatMetricValue(row.total_drink_calories) }}</td>
-                    <td>{{ formatMetricValue(row.total_beer_calories) }}</td>
-                    <td>{{ formatMetricValue(row.total_exercise_calories) }}</td>
-                    <td>{{ formatMetricValue(row.net_calories) }}</td>
-                    <td>{{ formatHistoryAvg(row.avg_daily_calories_in, row.avg_daily_calories_out) }}</td>
+                    <td data-label="Week End">{{ formatDashboardDate(row.week_end) }}</td>
+                    <td data-label="Food">{{ formatMetricValue(row.total_food_calories) }}</td>
+                    <td data-label="Drinks">{{ formatMetricValue(row.total_drink_calories) }}</td>
+                    <td data-label="Beer">{{ formatMetricValue(row.total_beer_calories) }}</td>
+                    <td data-label="Exercise">{{ formatMetricValue(row.total_exercise_calories) }}</td>
+                    <td data-label="Net">{{ formatMetricValue(row.net_calories) }}</td>
+                    <td data-label="Avg/Day In/Out">{{ formatHistoryAvg(row.avg_daily_calories_in, row.avg_daily_calories_out) }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -280,7 +280,7 @@
             <div class="dashTitle">Weight — Last 7 Days</div>
             <div class="dashSub">DAILY WEIGHT ENTRIES</div>
 
-            <div class="dashTable">
+            <div class="dashTable weightTable">
               <div class="dashHead">
                 <div>DATE</div>
                 <div>WEIGHT</div>
@@ -301,7 +301,7 @@
             <div class="dashTitle">Blood Pressure — Recent</div>
             <div class="dashSub">LAST 7 ENTRIES</div>
 
-            <div class="dashTable">
+            <div class="dashTable bpTable">
               <div class="dashHead bpHead">
                 <div>DATE</div>
                 <div>BP</div>
@@ -985,7 +985,7 @@ onMounted(() => {
 .status.err { border-color: rgba(255, 80, 80, 0.55); }
 
 .grid { position: relative; display: grid; gap: 14px; grid-template-columns: repeat(12, 1fr); }
-.panel { grid-column: span 6; border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)); box-sizing: border-box; }
+.panel { grid-column: span 6; border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)); box-sizing: border-box; min-width: 0; }
 .panel.wide { grid-column: span 12; }
 
 .panelHeader { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 10px; margin-bottom: 12px; }
@@ -1034,13 +1034,14 @@ onMounted(() => {
   border-radius: 12px;
   padding: 12px;
   background: rgba(255, 255, 255, 0.02);
+  min-width: 0;
 }
 
 .weeklyKpiGrid {
   margin-top: 10px;
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
 }
 
 .weeklyKpiCard {
@@ -1085,12 +1086,13 @@ onMounted(() => {
   margin-top: 10px;
   width: 100%;
   overflow-x: auto;
+  min-width: 0;
 }
 
 .weeklyHistoryTable {
   width: 100%;
   border-collapse: collapse;
-  min-width: 760px;
+  min-width: 700px;
 }
 
 .weeklyHistoryTable th,
@@ -1150,6 +1152,7 @@ onMounted(() => {
   margin-top: 10px;
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .dashHead {
@@ -1200,6 +1203,116 @@ onMounted(() => {
 }
 
 @media (max-width: 760px) {
+  .dashHead {
+    display: none;
+  }
+
+  .dashRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 8px 10px;
+    align-items: center;
+  }
+
+  .calRow {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-areas:
+      "date date date"
+      "in out net";
+    gap: 6px;
+    align-items: start;
+  }
+
+  .calRow > :nth-child(1) { grid-area: date; }
+  .calRow > :nth-child(2) { grid-area: in; }
+  .calRow > :nth-child(3) { grid-area: out; }
+  .calRow > :nth-child(4) { grid-area: net; }
+
+  .calRow > :nth-child(2)::before {
+    content: "IN";
+    display: block;
+    font-size: 10px;
+    opacity: 0.72;
+    letter-spacing: 0.08em;
+  }
+
+  .calRow > :nth-child(3)::before {
+    content: "OUT";
+    display: block;
+    font-size: 10px;
+    opacity: 0.72;
+    letter-spacing: 0.08em;
+  }
+
+  .calRow > :nth-child(4)::before {
+    content: "NET";
+    display: block;
+    font-size: 10px;
+    opacity: 0.72;
+    letter-spacing: 0.08em;
+  }
+
+  .weightTable .dashRow > :nth-child(2)::before {
+    content: "WEIGHT";
+    display: block;
+    font-size: 10px;
+    opacity: 0.72;
+    letter-spacing: 0.08em;
+  }
+
+  .bpTable .dashRow > :nth-child(2)::before {
+    content: "BP";
+    display: block;
+    font-size: 10px;
+    opacity: 0.72;
+    letter-spacing: 0.08em;
+  }
+
+  .weeklyHistoryTable {
+    min-width: 0;
+    border-collapse: separate;
+    border-spacing: 0 8px;
+  }
+
+  .weeklyHistoryTable thead {
+    display: none;
+  }
+
+  .weeklyHistoryTable tbody {
+    display: grid;
+    gap: 8px;
+  }
+
+  .weeklyHistoryTable tr {
+    display: block;
+    border: 1px solid var(--line2);
+    border-radius: 10px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .weeklyHistoryTable td {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    white-space: normal;
+  }
+
+  .weeklyHistoryTable td:last-child {
+    border-bottom: none;
+  }
+
+  .weeklyHistoryTable td::before {
+    content: attr(data-label);
+    opacity: 0.72;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 10px;
+    flex: 0 0 auto;
+  }
+
   .dietHead {
     display: none;
   }
@@ -1230,11 +1343,11 @@ onMounted(() => {
 @media (max-width: 430px) {
   .weeklyKpiGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
+    gap: 6px;
   }
 
   .weeklyKpiCard {
-    padding: 8px;
+    padding: 7px;
   }
 
   .weeklyKpiTitle,
@@ -1243,21 +1356,21 @@ onMounted(() => {
   }
 
   .weeklyKpiCurrent {
-    font-size: 18px;
+    font-size: 16px;
   }
 
-  .calHead,
+  .weeklyHistoryTable td {
+    padding: 7px 8px;
+    font-size: 11px;
+  }
+
   .calRow {
-    grid-template-columns: minmax(0, 1fr) minmax(44px, 52px) minmax(44px, 52px) minmax(44px, 52px);
-    gap: 6px;
-    padding: 8px;
     font-size: 12px;
   }
 
-  .calHead > div,
   .calRow > div,
   .dashRow > div,
-  .dashHead > div {
+  .weeklyHistoryTable td {
     min-width: 0;
   }
 }
