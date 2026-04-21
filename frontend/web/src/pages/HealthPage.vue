@@ -1087,6 +1087,8 @@ onMounted(() => {
   width: 100%;
   overflow-x: auto;
   min-width: 0;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
 }
 
 .weeklyHistoryTable {
@@ -1268,49 +1270,42 @@ onMounted(() => {
     letter-spacing: 0.08em;
   }
 
+  .weeklyHistoryWrap {
+    touch-action: pan-x;
+  }
+
   .weeklyHistoryTable {
-    min-width: 0;
-    border-collapse: separate;
-    border-spacing: 0 8px;
+    min-width: 620px;
   }
 
-  .weeklyHistoryTable thead {
-    display: none;
-  }
-
-  .weeklyHistoryTable tbody {
-    display: grid;
-    gap: 8px;
-  }
-
-  .weeklyHistoryTable tr {
-    display: block;
-    border: 1px solid var(--line2);
-    border-radius: 10px;
-    overflow: hidden;
-    background: rgba(255, 255, 255, 0.02);
-  }
-
+  .weeklyHistoryTable th,
   .weeklyHistoryTable td {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-    white-space: normal;
+    padding: 7px 8px;
+    font-size: 11px;
+    letter-spacing: 0.05em;
   }
 
-  .weeklyHistoryTable td:last-child {
-    border-bottom: none;
+  .weeklyHistoryTable th:nth-child(1),
+  .weeklyHistoryTable td:nth-child(1) {
+    min-width: 72px;
   }
 
-  .weeklyHistoryTable td::before {
-    content: attr(data-label);
-    opacity: 0.72;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    font-size: 10px;
-    flex: 0 0 auto;
+  .weeklyHistoryTable th:nth-child(2),
+  .weeklyHistoryTable td:nth-child(2),
+  .weeklyHistoryTable th:nth-child(3),
+  .weeklyHistoryTable td:nth-child(3),
+  .weeklyHistoryTable th:nth-child(4),
+  .weeklyHistoryTable td:nth-child(4),
+  .weeklyHistoryTable th:nth-child(5),
+  .weeklyHistoryTable td:nth-child(5),
+  .weeklyHistoryTable th:nth-child(6),
+  .weeklyHistoryTable td:nth-child(6) {
+    min-width: 64px;
+  }
+
+  .weeklyHistoryTable th:nth-child(7),
+  .weeklyHistoryTable td:nth-child(7) {
+    min-width: 120px;
   }
 
   .dietHead {
@@ -1359,9 +1354,14 @@ onMounted(() => {
     font-size: 16px;
   }
 
+  .weeklyHistoryTable {
+    min-width: 590px;
+  }
+
+  .weeklyHistoryTable th,
   .weeklyHistoryTable td {
-    padding: 7px 8px;
-    font-size: 11px;
+    padding: 6px 7px;
+    font-size: 10px;
   }
 
   .calRow {
@@ -1369,8 +1369,7 @@ onMounted(() => {
   }
 
   .calRow > div,
-  .dashRow > div,
-  .weeklyHistoryTable td {
+  .dashRow > div {
     min-width: 0;
   }
 }
