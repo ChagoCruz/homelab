@@ -189,6 +189,62 @@
 
         <div v-else class="dashboard-stack">
           <div class="dashPanel wideDash">
+            <div class="dashTitle">Weekly KPI Snapshot</div>
+            <div class="dashSub">WEEK ENDING {{ selectedWeekEndLabel }} (VS PREVIOUS WEEK)</div>
+
+            <div class="weeklyKpiGrid">
+              <article
+                v-for="card in weeklyKpiCards"
+                :key="card.key"
+                class="weeklyKpiCard"
+                :class="card.tone"
+              >
+                <div class="weeklyKpiTitle">{{ card.title }}</div>
+                <div class="weeklyKpiCurrent">{{ card.currentText }}</div>
+                <div class="weeklyKpiMeta">PREVIOUS: {{ card.previousText }}</div>
+                <div class="weeklyKpiMeta">DELTA: {{ card.deltaText }}</div>
+              </article>
+            </div>
+          </div>
+
+          <div class="dashPanel wideDash">
+            <div class="dashTitle">Weekly Comparison</div>
+            <div class="dashSub">LAST {{ weeklyHistoryRows.length || WEEKLY_HISTORY_WEEKS }} WEEKS</div>
+
+            <div v-if="weeklyHistoryRows.length === 0" class="empty">NO WEEKLY HISTORY AVAILABLE.</div>
+
+            <div v-else class="weeklyHistoryWrap">
+              <table class="weeklyHistoryTable">
+                <thead>
+                  <tr>
+                    <th>WEEK END</th>
+                    <th>FOOD</th>
+                    <th>DRINKS</th>
+                    <th>BEER</th>
+                    <th>EXERCISE</th>
+                    <th>NET</th>
+                    <th>AVG/DAY (IN/OUT)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="row in weeklyHistoryRows"
+                    :key="`history-${row.week_start}`"
+                  >
+                    <td data-label="Week End">{{ formatDashboardDate(row.week_end) }}</td>
+                    <td data-label="Food">{{ formatMetricValue(row.total_food_calories) }}</td>
+                    <td data-label="Drinks">{{ formatMetricValue(row.total_drink_calories) }}</td>
+                    <td data-label="Beer">{{ formatMetricValue(row.total_beer_calories) }}</td>
+                    <td data-label="Exercise">{{ formatMetricValue(row.total_exercise_calories) }}</td>
+                    <td data-label="Net">{{ formatMetricValue(row.net_calories) }}</td>
+                    <td data-label="Avg/Day In/Out">{{ formatHistoryAvg(row.avg_daily_calories_in, row.avg_daily_calories_out) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="dashPanel wideDash">
             <div class="dashTitle">Calories — Last 7 Days</div>
             <div class="dashSub">IN / OUT / NET (IN - OUT)</div>
 
@@ -224,7 +280,7 @@
             <div class="dashTitle">Weight — Last 7 Days</div>
             <div class="dashSub">DAILY WEIGHT ENTRIES</div>
 
-            <div class="dashTable">
+            <div class="dashTable weightTable">
               <div class="dashHead">
                 <div>DATE</div>
                 <div>WEIGHT</div>
@@ -245,7 +301,7 @@
             <div class="dashTitle">Blood Pressure — Recent</div>
             <div class="dashSub">LAST 7 ENTRIES</div>
 
-            <div class="dashTable">
+            <div class="dashTable bpTable">
               <div class="dashHead bpHead">
                 <div>DATE</div>
                 <div>BP</div>
@@ -301,10 +357,12 @@ const dietRows = ref([]);
 const workoutRows = ref([]);
 const HEALTH_DASHBOARD_DAYS = 30;
 const CALORIES_WINDOW_DAYS = 7;
+const WEEKLY_HISTORY_WEEKS = 8;
 const showDashboard = ref(false);
 const dashLoading = ref(false);
 const dashboardSeries = ref([]);
 const bpLast7 = ref([]);
+const weeklySummary = ref(buildEmptyWeeklySummary());
 
 function flash(msg, type = "ok") {
   status.value = msg;
@@ -330,6 +388,118 @@ function getLocalDateString() {
 
 function todayDate() {
   return toDateOnly(new Date());
+}
+
+function weekStartFromDate(dateValue) {
+  const dt = new Date(`${dateValue}T00:00:00`);
+  if (Number.isNaN(dt.getTime())) {
+    return dateValue;
+  }
+
+  const dayOfWeek = dt.getDay();
+  const offsetToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  dt.setDate(dt.getDate() + offsetToMonday);
+  return toDateOnly(dt);
+}
+
+function toNumberOrNull(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function buildEmptyWeeklyMetric() {
+  return {
+    current: null,
+    previous_week_value: null,
+    delta_from_previous_week: null,
+  };
+}
+
+function buildEmptyWeeklySummary(weekStart = null) {
+  return {
+    week_start: weekStart,
+    week_end: null,
+    total_food_calories: buildEmptyWeeklyMetric(),
+    total_drink_calories: buildEmptyWeeklyMetric(),
+    total_beer_calories: buildEmptyWeeklyMetric(),
+    total_exercise_calories: buildEmptyWeeklyMetric(),
+    net_calories: buildEmptyWeeklyMetric(),
+    avg_daily_calories_in: buildEmptyWeeklyMetric(),
+    avg_daily_calories_out: buildEmptyWeeklyMetric(),
+    days_since_last_safety_meeting: null,
+    weekly_history: [],
+  };
+}
+
+function normalizeWeeklyMetric(metric) {
+  return {
+    current: toNumberOrNull(metric?.current),
+    previous_week_value: toNumberOrNull(metric?.previous_week_value),
+    delta_from_previous_week: toNumberOrNull(metric?.delta_from_previous_week),
+  };
+}
+
+function normalizeWeeklyHistoryRow(row) {
+  return {
+    week_start: row?.week_start ?? "",
+    week_end: row?.week_end ?? "",
+    total_food_calories: toNumberOrNull(row?.total_food_calories),
+    total_drink_calories: toNumberOrNull(row?.total_drink_calories),
+    total_beer_calories: toNumberOrNull(row?.total_beer_calories),
+    total_exercise_calories: toNumberOrNull(row?.total_exercise_calories),
+    net_calories: toNumberOrNull(row?.net_calories),
+    avg_daily_calories_in: toNumberOrNull(row?.avg_daily_calories_in),
+    avg_daily_calories_out: toNumberOrNull(row?.avg_daily_calories_out),
+  };
+}
+
+function normalizeWeeklySummary(payload, fallbackWeekStart = null) {
+  const base = buildEmptyWeeklySummary(fallbackWeekStart);
+  if (!payload || typeof payload !== "object") return base;
+
+  return {
+    week_start: payload?.week_start ?? fallbackWeekStart,
+    week_end: payload?.week_end ?? null,
+    total_food_calories: normalizeWeeklyMetric(payload?.total_food_calories),
+    total_drink_calories: normalizeWeeklyMetric(payload?.total_drink_calories),
+    total_beer_calories: normalizeWeeklyMetric(payload?.total_beer_calories),
+    total_exercise_calories: normalizeWeeklyMetric(payload?.total_exercise_calories),
+    net_calories: normalizeWeeklyMetric(payload?.net_calories),
+    avg_daily_calories_in: normalizeWeeklyMetric(payload?.avg_daily_calories_in),
+    avg_daily_calories_out: normalizeWeeklyMetric(payload?.avg_daily_calories_out),
+    days_since_last_safety_meeting: toNumberOrNull(payload?.days_since_last_safety_meeting),
+    weekly_history: Array.isArray(payload?.weekly_history)
+      ? payload.weekly_history.map(normalizeWeeklyHistoryRow)
+      : [],
+  };
+}
+
+function formatMetricValue(value, fallback = "N/A") {
+  const n = toNumberOrNull(value);
+  if (n === null) return fallback;
+  return Math.round(n).toLocaleString();
+}
+
+function formatDeltaValue(value) {
+  const n = toNumberOrNull(value);
+  if (n === null) return "N/A";
+  const rounded = Math.round(n);
+  const sign = rounded > 0 ? "+" : "";
+  return `${sign}${rounded.toLocaleString()}`;
+}
+
+function formatHistoryAvg(avgIn, avgOut) {
+  return `${formatMetricValue(avgIn)} / ${formatMetricValue(avgOut)}`;
+}
+
+function safetyMeetingTone(daysSince) {
+  const n = toNumberOrNull(daysSince);
+  if (n === null) return "";
+  if (n < 3) return "warn";
+  if (n > 14) return "good";
+  return "";
 }
 
 function getRowDate(row) {
@@ -458,22 +628,35 @@ async function loadDashboard() {
   try {
     const baseUrl = getBaseUrl();
     const end = selectedDate.value || todayDate();
-    const res = await fetch(`${baseUrl}/health/dashboard?end_date=${encodeURIComponent(end)}&days=${HEALTH_DASHBOARD_DAYS}`);
+    const selectedWeekStart = weekStartFromDate(end);
+    const [healthResult, weeklyResult] = await Promise.allSettled([
+      fetch(`${baseUrl}/health/dashboard?end_date=${encodeURIComponent(end)}&days=${HEALTH_DASHBOARD_DAYS}`),
+      fetch(
+        `${baseUrl}/stats/weekly-life-summary?view=dashboard&week_start=${encodeURIComponent(selectedWeekStart)}&history_weeks=${WEEKLY_HISTORY_WEEKS}`
+      ),
+    ]);
 
-    if (!res.ok) {
+    if (healthResult.status === "fulfilled" && healthResult.value.ok) {
+      const payload = await healthResult.value.json();
+      const series = Array.isArray(payload?.series) ? payload.series : [];
+      dashboardSeries.value = sortRowsByDate(series.length ? series : buildEmptyHealthSeries(end, HEALTH_DASHBOARD_DAYS));
+      bpLast7.value = Array.isArray(payload?.bp_last_7) ? payload.bp_last_7 : [];
+    } else {
       dashboardSeries.value = buildEmptyHealthSeries(end, HEALTH_DASHBOARD_DAYS);
       bpLast7.value = [];
-      return;
     }
 
-    const payload = await res.json();
-    const series = Array.isArray(payload?.series) ? payload.series : [];
-    dashboardSeries.value = sortRowsByDate(series.length ? series : buildEmptyHealthSeries(end, HEALTH_DASHBOARD_DAYS));
-    bpLast7.value = Array.isArray(payload?.bp_last_7) ? payload.bp_last_7 : [];
+    if (weeklyResult.status === "fulfilled" && weeklyResult.value.ok) {
+      const payload = await weeklyResult.value.json();
+      weeklySummary.value = normalizeWeeklySummary(payload, selectedWeekStart);
+    } else {
+      weeklySummary.value = buildEmptyWeeklySummary(selectedWeekStart);
+    }
   } catch (e) {
     const end = selectedDate.value || todayDate();
     dashboardSeries.value = buildEmptyHealthSeries(end, HEALTH_DASHBOARD_DAYS);
     bpLast7.value = [];
+    weeklySummary.value = buildEmptyWeeklySummary(weekStartFromDate(end));
     flash(`DASHBOARD LOAD ERROR: ${e.message}`, "err");
   } finally {
     dashLoading.value = false;
@@ -609,6 +792,87 @@ const healthDashboardEndDate = computed(() => {
   if (!latest) return formatDashboardDate(selectedDate.value || todayDate());
   return formatDashboardDate(latest.date);
 });
+const selectedWeekEndLabel = computed(() => {
+  const explicitWeekEnd = weeklySummary.value?.week_end;
+  if (explicitWeekEnd) return formatDashboardDate(explicitWeekEnd);
+
+  const weekStart = weekStartFromDate(selectedDate.value || todayDate());
+  return formatDashboardDate(shiftDate(weekStart, 6));
+});
+const weeklyHistoryRows = computed(() =>
+  Array.isArray(weeklySummary.value?.weekly_history)
+    ? weeklySummary.value.weekly_history.slice(0, WEEKLY_HISTORY_WEEKS)
+    : []
+);
+const weeklyKpiCards = computed(() => {
+  const summary = weeklySummary.value || buildEmptyWeeklySummary();
+  return [
+    {
+      key: "food",
+      title: "Food Calories",
+      currentText: formatMetricValue(summary.total_food_calories?.current),
+      previousText: formatMetricValue(summary.total_food_calories?.previous_week_value),
+      deltaText: formatDeltaValue(summary.total_food_calories?.delta_from_previous_week),
+      tone: "",
+    },
+    {
+      key: "drinks",
+      title: "Drink Calories",
+      currentText: formatMetricValue(summary.total_drink_calories?.current),
+      previousText: formatMetricValue(summary.total_drink_calories?.previous_week_value),
+      deltaText: formatDeltaValue(summary.total_drink_calories?.delta_from_previous_week),
+      tone: "",
+    },
+    {
+      key: "beer",
+      title: "Beer Calories",
+      currentText: formatMetricValue(summary.total_beer_calories?.current),
+      previousText: formatMetricValue(summary.total_beer_calories?.previous_week_value),
+      deltaText: formatDeltaValue(summary.total_beer_calories?.delta_from_previous_week),
+      tone: "",
+    },
+    {
+      key: "exercise",
+      title: "Exercise Calories",
+      currentText: formatMetricValue(summary.total_exercise_calories?.current),
+      previousText: formatMetricValue(summary.total_exercise_calories?.previous_week_value),
+      deltaText: formatDeltaValue(summary.total_exercise_calories?.delta_from_previous_week),
+      tone: "",
+    },
+    {
+      key: "net",
+      title: "Net Calories",
+      currentText: formatMetricValue(summary.net_calories?.current),
+      previousText: formatMetricValue(summary.net_calories?.previous_week_value),
+      deltaText: formatDeltaValue(summary.net_calories?.delta_from_previous_week),
+      tone: "",
+    },
+    {
+      key: "avg-in",
+      title: "Avg Daily Calories In",
+      currentText: formatMetricValue(summary.avg_daily_calories_in?.current),
+      previousText: formatMetricValue(summary.avg_daily_calories_in?.previous_week_value),
+      deltaText: formatDeltaValue(summary.avg_daily_calories_in?.delta_from_previous_week),
+      tone: "",
+    },
+    {
+      key: "avg-out",
+      title: "Avg Daily Calories Out",
+      currentText: formatMetricValue(summary.avg_daily_calories_out?.current),
+      previousText: formatMetricValue(summary.avg_daily_calories_out?.previous_week_value),
+      deltaText: formatDeltaValue(summary.avg_daily_calories_out?.delta_from_previous_week),
+      tone: "",
+    },
+    {
+      key: "safety",
+      title: "Days Since Last Safety Meeting",
+      currentText: formatMetricValue(summary.days_since_last_safety_meeting),
+      previousText: "N/A",
+      deltaText: "N/A",
+      tone: safetyMeetingTone(summary.days_since_last_safety_meeting),
+    },
+  ];
+});
 const recentBpEntries = computed(() => bpLast7.value.slice(0, 7));
 
 async function saveSafetyMeeting(options = {}) {
@@ -721,7 +985,7 @@ onMounted(() => {
 .status.err { border-color: rgba(255, 80, 80, 0.55); }
 
 .grid { position: relative; display: grid; gap: 14px; grid-template-columns: repeat(12, 1fr); }
-.panel { grid-column: span 6; border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)); box-sizing: border-box; }
+.panel { grid-column: span 6; border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)); box-sizing: border-box; min-width: 0; }
 .panel.wide { grid-column: span 12; }
 
 .panelHeader { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 10px; margin-bottom: 12px; }
@@ -770,6 +1034,82 @@ onMounted(() => {
   border-radius: 12px;
   padding: 12px;
   background: rgba(255, 255, 255, 0.02);
+  min-width: 0;
+}
+
+.weeklyKpiGrid {
+  margin-top: 10px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.weeklyKpiCard {
+  border: 1px solid var(--line2);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  display: grid;
+  gap: 4px;
+}
+
+.weeklyKpiCard.warn {
+  border-color: rgba(255, 110, 110, 0.55);
+  background: rgba(255, 110, 110, 0.09);
+}
+
+.weeklyKpiCard.good {
+  border-color: rgba(120, 220, 140, 0.55);
+  background: rgba(120, 220, 140, 0.08);
+}
+
+.weeklyKpiTitle {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.weeklyKpiCurrent {
+  font-size: clamp(20px, 3vw, 32px);
+  line-height: 1.1;
+}
+
+.weeklyKpiMeta {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.76;
+}
+
+.weeklyHistoryWrap {
+  margin-top: 10px;
+  width: 100%;
+  overflow-x: auto;
+  min-width: 0;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+.weeklyHistoryTable {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 700px;
+}
+
+.weeklyHistoryTable th,
+.weeklyHistoryTable td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--line2);
+  white-space: nowrap;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.weeklyHistoryTable th {
+  opacity: 0.82;
 }
 
 .wideDash {
@@ -814,6 +1154,7 @@ onMounted(() => {
   margin-top: 10px;
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .dashHead {
@@ -864,6 +1205,109 @@ onMounted(() => {
 }
 
 @media (max-width: 760px) {
+  .dashHead {
+    display: none;
+  }
+
+  .dashRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 8px 10px;
+    align-items: center;
+  }
+
+  .calRow {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-areas:
+      "date date date"
+      "in out net";
+    gap: 6px;
+    align-items: start;
+  }
+
+  .calRow > :nth-child(1) { grid-area: date; }
+  .calRow > :nth-child(2) { grid-area: in; }
+  .calRow > :nth-child(3) { grid-area: out; }
+  .calRow > :nth-child(4) { grid-area: net; }
+
+  .calRow > :nth-child(2)::before {
+    content: "IN";
+    display: block;
+    font-size: 10px;
+    opacity: 0.72;
+    letter-spacing: 0.08em;
+  }
+
+  .calRow > :nth-child(3)::before {
+    content: "OUT";
+    display: block;
+    font-size: 10px;
+    opacity: 0.72;
+    letter-spacing: 0.08em;
+  }
+
+  .calRow > :nth-child(4)::before {
+    content: "NET";
+    display: block;
+    font-size: 10px;
+    opacity: 0.72;
+    letter-spacing: 0.08em;
+  }
+
+  .weightTable .dashRow > :nth-child(2)::before {
+    content: "WEIGHT";
+    display: block;
+    font-size: 10px;
+    opacity: 0.72;
+    letter-spacing: 0.08em;
+  }
+
+  .bpTable .dashRow > :nth-child(2)::before {
+    content: "BP";
+    display: block;
+    font-size: 10px;
+    opacity: 0.72;
+    letter-spacing: 0.08em;
+  }
+
+  .weeklyHistoryWrap {
+    touch-action: pan-x;
+  }
+
+  .weeklyHistoryTable {
+    min-width: 620px;
+  }
+
+  .weeklyHistoryTable th,
+  .weeklyHistoryTable td {
+    padding: 7px 8px;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+  }
+
+  .weeklyHistoryTable th:nth-child(1),
+  .weeklyHistoryTable td:nth-child(1) {
+    min-width: 72px;
+  }
+
+  .weeklyHistoryTable th:nth-child(2),
+  .weeklyHistoryTable td:nth-child(2),
+  .weeklyHistoryTable th:nth-child(3),
+  .weeklyHistoryTable td:nth-child(3),
+  .weeklyHistoryTable th:nth-child(4),
+  .weeklyHistoryTable td:nth-child(4),
+  .weeklyHistoryTable th:nth-child(5),
+  .weeklyHistoryTable td:nth-child(5),
+  .weeklyHistoryTable th:nth-child(6),
+  .weeklyHistoryTable td:nth-child(6) {
+    min-width: 64px;
+  }
+
+  .weeklyHistoryTable th:nth-child(7),
+  .weeklyHistoryTable td:nth-child(7) {
+    min-width: 120px;
+  }
+
   .dietHead {
     display: none;
   }
@@ -892,18 +1336,40 @@ onMounted(() => {
 }
 
 @media (max-width: 430px) {
-  .calHead,
-  .calRow {
-    grid-template-columns: minmax(0, 1fr) minmax(44px, 52px) minmax(44px, 52px) minmax(44px, 52px);
+  .weeklyKpiGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
-    padding: 8px;
+  }
+
+  .weeklyKpiCard {
+    padding: 7px;
+  }
+
+  .weeklyKpiTitle,
+  .weeklyKpiMeta {
+    font-size: 10px;
+  }
+
+  .weeklyKpiCurrent {
+    font-size: 16px;
+  }
+
+  .weeklyHistoryTable {
+    min-width: 590px;
+  }
+
+  .weeklyHistoryTable th,
+  .weeklyHistoryTable td {
+    padding: 6px 7px;
+    font-size: 10px;
+  }
+
+  .calRow {
     font-size: 12px;
   }
 
-  .calHead > div,
   .calRow > div,
-  .dashRow > div,
-  .dashHead > div {
+  .dashRow > div {
     min-width: 0;
   }
 }
