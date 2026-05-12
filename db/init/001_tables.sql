@@ -367,3 +367,19 @@ CREATE INDEX IF NOT EXISTS idx_journal_pattern_profile_core_values_gin
 
 CREATE INDEX IF NOT EXISTS idx_journal_pattern_profile_motivation_drivers_gin
     ON journal_pattern_profile USING GIN (motivation_drivers);
+
+CREATE TABLE IF NOT EXISTS assistant_pending_actions (
+    id SERIAL PRIMARY KEY,
+    action_type TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    expires_at TIMESTAMP NOT NULL DEFAULT now() + interval '30 minutes',
+    completed_at TIMESTAMP NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_pending_actions_status_created
+ON assistant_pending_actions (status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_pending_actions_action_type
+ON assistant_pending_actions (action_type);
